@@ -1,0 +1,15 @@
+{
+  "name": "renthouse",
+  "private": true,
+  "scripts": {
+    "css:build": "tailwindcss -i ./static/rentals/input.css -o ./static/rentals/site.css --minify",
+    "css:watch": "tailwindcss -i ./static/rentals/input.css -o ./static/rentals/site.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.11",
+    "tailwindcss": "^4.1.11"
+  },
+  "overrides": {
+    "@parcel/watcher": "2.6.0"
+  }
+}

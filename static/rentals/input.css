@@ -1,0 +1,64 @@
+@import "tailwindcss";
+@source "../../templates";
+
+@theme {
+  --color-brand-50: #edf5ef;
+  --color-brand-100: #dcece1;
+  --color-brand-600: #216b50;
+  --color-brand-700: #184f3b;
+  --color-ink: #17211e;
+  --color-muted: #66736d;
+  --font-sans: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-stone-50 text-ink antialiased;
+  }
+
+  h1, h2, h3 {
+    @apply font-semibold tracking-tight;
+  }
+
+  input:not([type="radio"]):not([type="checkbox"]):not([type="file"]), select, textarea {
+    @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-ink outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100;
+  }
+
+  input[type="radio"], input[type="checkbox"] {
+    @apply h-4 w-4 shrink-0 accent-brand-600;
+  }
+
+  input[type="file"] {
+    @apply block max-w-full text-sm text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:font-semibold file:text-brand-700 hover:file:bg-brand-100;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-600 px-5 py-2 font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600;
+  }
+
+  .btn-secondary {
+    @apply inline-flex min-h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-3 py-1.5 font-semibold text-ink transition hover:bg-stone-100;
+  }
+
+  .form-label {
+    @apply grid gap-1.5 text-sm font-semibold text-stone-700;
+  }
+
+  .field-error {
+    @apply text-sm font-medium text-rose-700;
+  }
+
+  .eyebrow {
+    @apply mb-2 text-xs font-bold tracking-[0.14em] text-brand-600;
+  }
+
+  .stat-card {
+    @apply rounded-xl bg-slate-950 p-5 text-white shadow-sm;
+  }
+
+  .mobile-safe {
+    @apply min-w-0 max-w-full;
+  }
+}

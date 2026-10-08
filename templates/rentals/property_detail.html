@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ property.title }} · RentHouse{% endblock %}
+{% block content %}
+  <a class="my-4 inline-block text-sm font-semibold text-brand-600 hover:underline sm:my-6 sm:text-base" href="{% url 'home' %}">← Back to listings</a>
+  <div class="mb-10 grid min-w-0 items-start gap-6 lg:mb-12 lg:grid-cols-[1.7fr_0.8fr] lg:gap-8">
+    <article>
+      {% if property.cover_image %}
+        <button class="block w-full overflow-hidden rounded-xl bg-stone-100 text-left" type="button" data-gallery-image data-gallery-src="{{ property.cover_image.url }}" data-gallery-caption="{{ property.title }} · Cover photo" aria-label="Open cover photo for {{ property.title }}">
+          <img class="max-h-[440px] min-h-56 w-full object-cover sm:min-h-72" src="{{ property.cover_image.url }}" alt="Cover photo for {{ property.title }}">
+        </button>
+      {% elif gallery_images %}
+        <button class="block w-full overflow-hidden rounded-xl bg-stone-100 text-left" type="button" data-gallery-image data-gallery-src="{{ gallery_images.0.image.url }}" data-gallery-caption="{{ property.title }} · Photo 1" aria-label="Open photo of {{ property.title }}">
+          <img class="max-h-[440px] min-h-56 w-full object-cover sm:min-h-72" src="{{ gallery_images.0.image.url }}" alt="Photo of {{ property.title }}">
+        </button>
+      {% else %}<div class="grid min-h-72 place-items-center rounded-xl bg-gradient-to-br from-brand-50 to-brand-100 font-semibold text-brand-600">Photos coming soon</div>{% endif %}
+      {% if gallery_images %}
+        <div class="mt-2 grid grid-cols-2 gap-2 sm:mt-3 sm:grid-cols-3 sm:gap-3">
+          {% for photo in gallery_images %}
+            {% if property.cover_image or not forloop.first %}
+              <button class="group relative overflow-hidden rounded-lg bg-stone-100 text-left" type="button" data-gallery-image data-gallery-src="{{ photo.image.url }}" data-gallery-caption="{{ property.title }} · Photo {{ forloop.counter }}" aria-label="Open photo {{ forloop.counter }} of {{ property.title }}">
+                <img class="h-28 w-full object-cover transition duration-300 group-hover:scale-105 sm:h-40" src="{{ photo.image.url }}" alt="Additional photo {{ forloop.counter }} of {{ property.title }}">
+                <span class="absolute inset-0 grid place-items-center bg-slate-950/0 text-sm font-semibold text-white transition group-hover:bg-slate-950/35">View photo</span>
+              </button>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+      <p class="eyebrow mt-5 sm:mt-6">{{ property.get_property_type_display }} · {{ property.city }}, {{ property.state }}</p>
+      <h1 class="break-words text-3xl font-bold sm:text-4xl">{{ property.title }}</h1>
+      <p class="mt-3 text-xl font-bold text-brand-600 sm:text-2xl">₹{{ property.monthly_rent|floatformat:0 }} <span class="text-sm font-normal text-muted sm:text-base">/ month</span></p>
+      <p class="mt-2 text-muted">{{ property.bedrooms }} bedrooms · {{ property.bathrooms }} bathrooms · Security deposit ₹{{ property.security_deposit|floatformat:0 }}</p>
+      <p class="mt-1 text-sm text-muted">Available from {{ property.available_from|date:"j F Y" }}</p>
+      <h2 class="mb-2 mt-8 text-xl font-bold">About this place</h2>
+      <p>{{ property.description|linebreaksbr }}</p>
+      <h2 class="mb-2 mt-8 text-xl font-bold">Location</h2>
+      <p>{{ property.address }}<br>{{ property.city }}, {{ property.state }} {{ property.postal_code }}</p>
+      <p class="mt-5 text-sm text-muted">Provided by {{ property.owner.get_full_name|default:property.owner.username }}</p>
+    </article>
+    <aside class="rounded-xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6 lg:sticky lg:top-6">
+      {% if user == property.owner %}
+        <p class="eyebrow">YOUR LISTING</p><h2 class="mb-2 text-xl font-bold">Manage this property</h2>
+        <p class="mb-4">Listing status: <strong>{{ property.get_status_display }}</strong></p>
+        <a class="btn-primary w-full" href="{% url 'property_edit' property.pk %}">Edit listing</a>
+      {% elif user.is_authenticated and user.role == "renter" %}
+        <form class="mb-4" method="post" action="{% url 'saved_property_toggle' property.pk %}">
+          {% csrf_token %}
+          {% if is_saved %}
+            <input type="hidden" name="action" value="remove">
+            <button class="btn-secondary w-full" type="submit">♥ Saved · Remove</button>
+          {% else %}
+            <input type="hidden" name="action" value="save">
+            <button class="btn-secondary w-full" type="submit">♡ Save this place</button>
+          {% endif %}
+        </form>
+        <p class="eyebrow">INTERESTED?</p><h2 class="mb-2 text-xl font-bold">Request a visit</h2>
+        <p class="mb-5 text-sm text-muted">Choose a future time. The service provider will confirm or decline your request.</p>
+        <form id="visit-request" class="scroll-mt-6 grid gap-4" method="post" action="{% url 'visit_request_create' property.pk %}">
+          {% csrf_token %}
+          {% for field in visit_form %}
+            <label class="form-label">{{ field.label }}{{ field }}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</label>
+          {% endfor %}
+          {% for error in visit_form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+          <button class="btn-primary w-full" type="submit">Send visit request</button>
+        </form>
+      {% elif user.is_authenticated %}
+        <h2 class="mb-2 text-xl font-bold">Home seeker account required</h2><p>Visit requests are available to home seekers.</p>
+      {% else %}
+        <p class="eyebrow">MAKE IT YOURS</p><h2 class="mb-2 text-xl font-bold">See it in person</h2>
+        <p class="mb-5 text-sm text-muted">Create a home seeker account to save this place and request a visit with its provider.</p>
+        <a class="btn-primary w-full" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to request a visit</a>
+      {% endif %}
+    </aside>
+  </div>
+  {% if property.cover_image or gallery_images %}
+    <dialog id="photo-lightbox" class="m-auto w-[calc(100%-1.5rem)] max-w-5xl overflow-hidden rounded-2xl bg-slate-950 p-0 text-white shadow-2xl backdrop:bg-slate-950/90">
+      <div class="flex items-center justify-between gap-3 px-3 py-3 sm:px-5">
+        <p class="min-w-0 truncate text-sm font-semibold" data-lightbox-caption></p>
+        <div class="flex shrink-0 items-center gap-2">
+          <span class="text-xs text-slate-300" data-lightbox-counter></span>
+          <button class="flex h-10 w-10 items-center justify-center rounded-lg text-xl text-white hover:bg-white/10" type="button" data-lightbox-close aria-label="Close photo viewer">×</button>
+        </div>
+      </div>
+      <div class="relative flex min-h-64 items-center justify-center bg-black sm:min-h-96">
+        <button class="absolute left-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/70 text-2xl text-white hover:bg-slate-800 sm:left-4" type="button" data-lightbox-previous aria-label="Previous photo">‹</button>
+        <img class="max-h-[72vh] w-full select-none object-contain" data-lightbox-image alt="">
+        <button class="absolute right-2 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/70 text-2xl text-white hover:bg-slate-800 sm:right-4" type="button" data-lightbox-next aria-label="Next photo">›</button>
+      </div>
+      <p class="px-4 py-3 text-center text-xs text-slate-400">Swipe to browse · Use arrow keys on desktop</p>
+    </dialog>
+  {% endif %}
+  {% if user.is_authenticated and user.role == "renter" %}
+    <div class="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+      <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-1">
+        <p class="min-w-0 truncate font-bold text-brand-600">₹{{ property.monthly_rent|floatformat:0 }} <span class="text-xs font-normal text-muted">/ month</span></p>
+        <a class="btn-primary min-h-10 shrink-0 px-4 py-2 text-sm" href="#visit-request">Request a viewing</a>
+      </div>
+    </div>
+  {% elif not user.is_authenticated %}
+    <div class="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+      <a class="btn-primary mx-auto min-h-10 w-full max-w-6xl px-4 py-2 text-sm" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to request a viewing</a>
+    </div>
+  {% endif %}
+{% endblock %}
