@@ -3,7 +3,7 @@
 {% block content %}
   <div class="mx-auto my-10 max-w-3xl">
     <p class="eyebrow">SERVICE PROVIDER WORKSPACE</p>
-    <h1 class="text-4xl font-bold">{% if property %}Edit your listing{% else %}List a place to rent{% endif %}</h1>
+    <h1 class="text-4xl font-bold">{% if property %}Edit your listing{% else %}Add a room or property{% endif %}</h1>
     <p class="mt-2 text-muted">Add clear details and photos of your rental. Save as a draft first, then publish when it’s ready for home seekers.</p>
     <form method="post" enctype="multipart/form-data" class="mt-6 grid min-w-0 gap-4 rounded-xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
       {% csrf_token %}

@@ -1,10 +1,10 @@
 from django import forms
-from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import models
 from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
 
-from .models import Property, User, VisitRequest
+from .models import Property, Reservation, User, VisitRequest
 
 
 class MultipleImageInput(forms.ClearableFileInput):
@@ -42,6 +42,23 @@ class SignUpForm(UserCreationForm):
         if User.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError("An account with this email already exists.")
         return email
+
+
+class RoleBasedAuthenticationForm(AuthenticationForm):
+    role = forms.ChoiceField(
+        label="Log in as",
+        choices=User.Role.choices,
+        widget=forms.RadioSelect(attrs={"class": "accent-brand-600"}),
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        user = getattr(self, "user_cache", None)
+        if user and user.role != cleaned_data.get("role"):
+            raise forms.ValidationError(
+                "Please enter valid credentials for the selected account type."
+            )
+        return cleaned_data
 
 
 class PropertySearchForm(forms.Form):
@@ -212,6 +229,30 @@ class VisitRequestForm(forms.ModelForm):
         if scheduled_for <= timezone.now():
             raise forms.ValidationError("Choose a visit time in the future.")
         return scheduled_for
+
+
+class ReservationForm(forms.ModelForm):
+    class Meta:
+        model = Reservation
+        fields = ("start_date", "end_date", "message")
+        widgets = {
+            "start_date": forms.DateInput(attrs={"type": "date"}),
+            "end_date": forms.DateInput(attrs={"type": "date"}),
+            "message": forms.Textarea(attrs={"rows": 3}),
+        }
+
+
+class ReservationDecisionForm(forms.ModelForm):
+    class Meta:
+        model = Reservation
+        fields = ("status",)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["status"].choices = [
+            (Reservation.Status.CONFIRMED, "Confirm"),
+            (Reservation.Status.DECLINED, "Decline"),
+        ]
 
 
 class VisitDecisionForm(forms.ModelForm):

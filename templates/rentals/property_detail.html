@@ -52,6 +52,18 @@
             <button class="btn-secondary w-full" type="submit">♡ Save this place</button>
           {% endif %}
         </form>
+        <section id="booking-request" class="scroll-mt-6 border-b border-stone-200 pb-6">
+          <p class="eyebrow">READY TO MOVE?</p><h2 class="mb-2 text-xl font-bold">Book this place</h2>
+          <p class="mb-4 text-sm text-muted">Send your requested dates to the service provider. Your booking is not confirmed until they accept it.</p>
+          <form class="grid gap-4" method="post" action="{% url 'reservation_create' property.pk %}">
+            {% csrf_token %}
+            {% for field in reservation_form %}
+              <label class="form-label">{{ field.label }}{{ field }}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</label>
+            {% endfor %}
+            {% for error in reservation_form.non_field_errors %}<p class="field-error">{{ error }}</p>{% endfor %}
+            <button class="btn-primary w-full" type="submit">Send booking request</button>
+          </form>
+        </section>
         <p class="eyebrow">INTERESTED?</p><h2 class="mb-2 text-xl font-bold">Request a visit</h2>
         <p class="mb-5 text-sm text-muted">Choose a future time. The service provider will confirm or decline your request.</p>
         <form id="visit-request" class="scroll-mt-6 grid gap-4" method="post" action="{% url 'visit_request_create' property.pk %}">
@@ -63,11 +75,11 @@
           <button class="btn-primary w-full" type="submit">Send visit request</button>
         </form>
       {% elif user.is_authenticated %}
-        <h2 class="mb-2 text-xl font-bold">Home seeker account required</h2><p>Visit requests are available to home seekers.</p>
+        <h2 class="mb-2 text-xl font-bold">Home seeker account required</h2><p>Booking and visit requests are available to home seekers.</p>
       {% else %}
-        <p class="eyebrow">MAKE IT YOURS</p><h2 class="mb-2 text-xl font-bold">See it in person</h2>
-        <p class="mb-5 text-sm text-muted">Create a home seeker account to save this place and request a visit with its provider.</p>
-        <a class="btn-primary w-full" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to request a visit</a>
+        <p class="eyebrow">MAKE IT YOURS</p><h2 class="mb-2 text-xl font-bold">Book or visit this place</h2>
+        <p class="mb-5 text-sm text-muted">Log in as a home seeker to save this place, request a visit or submit booking dates.</p>
+        <a class="btn-primary w-full" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to continue</a>
       {% endif %}
     </aside>
   </div>
@@ -92,12 +104,12 @@
     <div class="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
       <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-1">
         <p class="min-w-0 truncate font-bold text-brand-600">₹{{ property.monthly_rent|floatformat:0 }} <span class="text-xs font-normal text-muted">/ month</span></p>
-        <a class="btn-primary min-h-10 shrink-0 px-4 py-2 text-sm" href="#visit-request">Request a viewing</a>
+        <a class="btn-primary min-h-10 shrink-0 px-4 py-2 text-sm" href="#booking-request">Book this place</a>
       </div>
     </div>
   {% elif not user.is_authenticated %}
     <div class="fixed inset-x-0 bottom-0 z-30 border-t border-stone-200 bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
-      <a class="btn-primary mx-auto min-h-10 w-full max-w-6xl px-4 py-2 text-sm" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to request a viewing</a>
+      <a class="btn-primary mx-auto min-h-10 w-full max-w-6xl px-4 py-2 text-sm" href="{% url 'login' %}?next={{ request.path|urlencode }}">Log in to book this place</a>
     </div>
   {% endif %}
 {% endblock %}

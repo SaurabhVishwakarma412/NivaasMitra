@@ -8,15 +8,26 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
+from django.core.paginator import Paginator
 
 from .forms import (
     PropertyForm,
     PropertySearchForm,
+    ReservationDecisionForm,
+    ReservationForm,
+    RoleBasedAuthenticationForm,
     SignUpForm,
     VisitDecisionForm,
     VisitRequestForm,
 )
-from .models import Property, PropertyImage, SavedProperty, User, VisitRequest
+from .models import (
+    Property,
+    PropertyImage,
+    Reservation,
+    SavedProperty,
+    User,
+    VisitRequest,
+)
 
 
 def save_additional_images(property_listing, form):
@@ -73,6 +84,61 @@ def home(request):
     )
 
 
+
+def listings(request):
+    """Show all published properties with filters, pagination, and saved toggles.
+    Mirrors the search form on the home page but provides full pagination.
+    """
+    search_form = PropertySearchForm(request.GET or None)
+    queryset = Property.objects.filter(status=Property.Status.PUBLISHED).select_related('owner')
+    if search_form.is_valid():
+        f = search_form.cleaned_data
+        if f.get('city'):
+            queryset = queryset.filter(city__icontains=f['city'].strip())
+        if f.get('property_type'):
+            queryset = queryset.filter(property_type=f['property_type'])
+        if f.get('min_rent') is not None:
+            queryset = queryset.filter(monthly_rent__gte=f['min_rent'])
+        if f.get('max_rent') is not None:
+            queryset = queryset.filter(monthly_rent__lte=f['max_rent'])
+        if f.get('min_bedrooms'):
+            queryset = queryset.filter(bedrooms__gte=f['min_bedrooms'])
+        if f.get('move_in_date'):
+            queryset = queryset.filter(available_from__lte=f['move_in_date'])
+        sort_order = f.get('sort')
+        if sort_order == PropertySearchForm.SortOrder.RENT_LOW:
+            queryset = queryset.order_by('monthly_rent', '-created_at')
+        elif sort_order == PropertySearchForm.SortOrder.RENT_HIGH:
+            queryset = queryset.order_by('-monthly_rent', '-created_at')
+        elif sort_order == PropertySearchForm.SortOrder.AVAILABLE:
+            queryset = queryset.order_by('available_from', '-created_at')
+    else:
+        queryset = queryset.none()
+
+    # Pagination – 12 items per page
+    paginator = Paginator(queryset, 12)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    saved_ids = set()
+    if request.user.is_authenticated and request.user.role == User.Role.RENTER:
+        saved_ids = set(
+            SavedProperty.objects.filter(renter=request.user).values_list('property_id', flat=True)
+        )
+
+    context = {
+        'search_form': search_form,
+        'properties': page_obj.object_list,
+        'page_obj': page_obj,
+        'results_count': queryset.count(),
+        'saved_property_ids': saved_ids,
+    }
+    return render(request, 'rentals/listings.html', context)
+
+def about(request):
+    """About page providing information about the service."""
+    return render(request, "rentals/about.html")
+
 def sign_up(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
@@ -85,6 +151,27 @@ def sign_up(request):
     return render(request, "registration/signup.html", {"form": form})
 
 
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect("dashboard")
+    form = RoleBasedAuthenticationForm(request, data=request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        login(request, form.get_user())
+        next_url = request.POST.get("next") or request.GET.get("next")
+        if next_url and url_has_allowed_host_and_scheme(
+            next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return redirect(next_url)
+        return redirect("dashboard")
+    return render(request, "registration/login.html", {"form": form})
+
+def contact(request):
+    """Simple contact page."""
+    return render(request, "rentals/contact.html")
+
+
 def property_detail(request, pk):
     property_listing = get_object_or_404(Property, pk=pk)
     if (
@@ -94,6 +181,7 @@ def property_detail(request, pk):
     ):
         raise Http404
     visit_form = VisitRequestForm()
+    reservation_form = ReservationForm()
     is_saved = False
     if request.user.is_authenticated and request.user.role == User.Role.RENTER:
         is_saved = SavedProperty.objects.filter(
@@ -105,6 +193,7 @@ def property_detail(request, pk):
         {
             "property": property_listing,
             "visit_form": visit_form,
+            "reservation_form": reservation_form,
             "is_saved": is_saved,
             "gallery_images": property_listing.gallery_images.all(),
         },
@@ -120,6 +209,9 @@ def dashboard(request):
         visit_requests = VisitRequest.objects.filter(
             property__owner=request.user
         ).select_related("property", "renter")
+        reservations = Reservation.objects.filter(
+            property__owner=request.user
+        ).select_related("property", "renter")
         saved_properties = Property.objects.none()
         summary = {
             "properties": properties.count(),
@@ -128,10 +220,17 @@ def dashboard(request):
                 status=VisitRequest.Status.REQUESTED
             ).count(),
             "total_visits": visit_requests.count(),
+            "pending_reservations": reservations.filter(
+                status=Reservation.Status.REQUESTED
+            ).count(),
+            "total_reservations": reservations.count(),
         }
     else:
         properties = Property.objects.none()
         visit_requests = VisitRequest.objects.filter(renter=request.user).select_related(
+            "property", "property__owner"
+        )
+        reservations = Reservation.objects.filter(renter=request.user).select_related(
             "property", "property__owner"
         )
         saved_properties = Property.objects.filter(
@@ -146,6 +245,12 @@ def dashboard(request):
             "confirmed_visits": visit_requests.filter(
                 status=VisitRequest.Status.CONFIRMED
             ).count(),
+            "pending_reservations": reservations.filter(
+                status=Reservation.Status.REQUESTED
+            ).count(),
+            "confirmed_reservations": reservations.filter(
+                status=Reservation.Status.CONFIRMED
+            ).count(),
         }
     return render(
         request,
@@ -153,6 +258,7 @@ def dashboard(request):
         {
             "properties": properties,
             "visit_requests": visit_requests,
+            "reservations": reservations,
             "saved_properties": saved_properties,
             "summary": summary,
         },
@@ -341,4 +447,81 @@ def visit_request_cancel(request, pk):
     visit_request.status = VisitRequest.Status.CANCELLED
     visit_request.save(update_fields=["status", "updated_at"])
     messages.success(request, "Your visit request has been cancelled.")
+    return redirect("dashboard")
+
+
+@login_required
+@require_POST
+def reservation_create(request, pk):
+    property_listing = get_object_or_404(
+        Property, pk=pk, status=Property.Status.PUBLISHED
+    )
+    if request.user.role != User.Role.RENTER:
+        messages.error(request, "Only home seeker accounts can book a place.")
+        return redirect("property_detail", pk=pk)
+    form = ReservationForm(request.POST)
+    form.instance.property = property_listing
+    form.instance.renter = request.user
+    if form.is_valid():
+        try:
+            form.save()
+        except ValidationError as error:
+            form.add_error(None, error)
+        else:
+            messages.success(
+                request,
+                "Your booking request was sent to the service provider.",
+            )
+            return redirect("dashboard")
+    return render(
+        request,
+        "rentals/property_detail.html",
+        {
+            "property": property_listing,
+            "visit_form": VisitRequestForm(),
+            "reservation_form": form,
+            "gallery_images": property_listing.gallery_images.all(),
+            "is_saved": SavedProperty.objects.filter(
+                renter=request.user, property=property_listing
+            ).exists(),
+        },
+    )
+
+
+@login_required
+@require_POST
+def reservation_decide(request, pk):
+    reservation = get_object_or_404(
+        Reservation.objects.select_related("property"),
+        pk=pk,
+        property__owner=request.user,
+        status=Reservation.Status.REQUESTED,
+    )
+    form = ReservationDecisionForm(request.POST, instance=reservation)
+    if form.is_valid():
+        try:
+            form.save()
+        except ValidationError as error:
+            messages.error(request, "This booking can no longer be confirmed.")
+            for message in error.messages:
+                messages.error(request, message)
+        else:
+            messages.success(request, "The booking request has been updated.")
+    else:
+        messages.error(request, "Choose a valid decision for this booking.")
+    return redirect("dashboard")
+
+
+@login_required
+@require_POST
+def reservation_cancel(request, pk):
+    reservation = get_object_or_404(
+        Reservation.objects.select_related("property"),
+        pk=pk,
+        renter=request.user,
+        status__in=[Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED],
+    )
+    reservation.status = Reservation.Status.CANCELLED
+    reservation.save(update_fields=["status", "updated_at"])
+    messages.success(request, "Your booking request has been cancelled.")
     return redirect("dashboard")

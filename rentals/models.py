@@ -177,3 +177,77 @@ class SavedProperty(models.Model):
 
     def __str__(self):
         return f"{self.renter} saved {self.property}"
+
+
+class Reservation(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        CONFIRMED = "confirmed", "Confirmed"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+        COMPLETED = "completed", "Completed"
+
+    property = models.ForeignKey(
+        Property, on_delete=models.PROTECT, related_name="reservations"
+    )
+    renter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="reservations",
+    )
+    start_date = models.DateField()
+    end_date = models.DateField()
+    message = models.CharField(max_length=1000, blank=True)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.REQUESTED, db_index=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["start_date", "created_at"]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        today = timezone.localdate()
+
+        if (
+            self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}
+            and self.start_date
+            and self.start_date < today
+        ):
+            errors["start_date"] = "Check-in date cannot be in the past."
+        if self.start_date and self.end_date and self.end_date <= self.start_date:
+            errors["end_date"] = "Check-out must be after check-in."
+        if self.property_id and self.renter_id:
+            if self.property.owner_id == self.renter_id:
+                errors["renter"] = "You cannot book your own listing."
+            if self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}:
+                if self.start_date and self.start_date < self.property.available_from:
+                    errors["start_date"] = "This place is not available by that date."
+                if self.property.status != Property.Status.PUBLISHED:
+                    errors["property"] = "This listing is not currently available."
+                if self.start_date and self.end_date and self.end_date > self.start_date:
+                    conflicts = type(self).objects.filter(
+                        property_id=self.property_id,
+                        status__in=[self.Status.REQUESTED, self.Status.CONFIRMED],
+                        start_date__lt=self.end_date,
+                        end_date__gt=self.start_date,
+                    )
+                    if self.pk:
+                        conflicts = conflicts.exclude(pk=self.pk)
+                    if conflicts.exists():
+                        errors["start_date"] = (
+                            "These dates overlap another active booking request."
+                        )
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean(validate_unique=False, validate_constraints=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Reservation for {self.property} by {self.renter}"

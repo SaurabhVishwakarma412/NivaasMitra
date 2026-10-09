@@ -4,11 +4,14 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("listings/", views.listings, name="listings"),
     path("", views.home, name="home"),
+    path("about/", views.about, name="about"),
+    path("contact/", views.contact, name="contact"),
     path("accounts/signup/", views.sign_up, name="signup"),
     path(
         "accounts/login/",
-        auth_views.LoginView.as_view(template_name="registration/login.html"),
+        views.login_view,
         name="login",
     ),
     path(
@@ -49,5 +52,20 @@ urlpatterns = [
         "visits/<str:pk>/cancel/",
         views.visit_request_cancel,
         name="visit_request_cancel",
+    ),
+    path(
+        "properties/<str:pk>/book/",
+        views.reservation_create,
+        name="reservation_create",
+    ),
+    path(
+        "bookings/<str:pk>/decision/",
+        views.reservation_decide,
+        name="reservation_decide",
+    ),
+    path(
+        "bookings/<str:pk>/cancel/",
+        views.reservation_cancel,
+        name="reservation_cancel",
     ),
 ]

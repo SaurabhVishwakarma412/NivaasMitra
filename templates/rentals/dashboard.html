@@ -3,20 +3,23 @@
 {% block content %}
   <section class="my-10 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
     <div><p class="eyebrow">{{ user.get_role_display }} ACCOUNT</p><h1 class="text-3xl font-bold">Welcome, {{ user.first_name|default:user.username }}</h1>
-      <p class="mt-1 text-muted">{% if user.role == "landlord" %}Manage your rental listings and respond to home seeker requests.{% else %}Track saved homes and viewing requests with service providers.{% endif %}</p>
+      <p class="mt-1 text-muted">{% if user.role == "landlord" %}Manage your room listings and respond to viewing and booking requests.{% else %}Track saved homes, visits and booking requests with service providers.{% endif %}</p>
     </div>
-    {% if user.role == "landlord" %}<a class="btn-primary" href="{% url 'property_create' %}">+ Add a listing</a>{% endif %}
+    {% if user.role == "landlord" %}<a class="btn-primary" href="{% url 'property_create' %}">+ Add a room</a>{% endif %}
   </section>
-  <section class="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Account summary">
+  <section class="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Account summary">
     {% if user.role == "landlord" %}
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Your listings</p><p class="mt-1 text-3xl font-bold">{{ summary.properties }}</p></article>
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Published</p><p class="mt-1 text-3xl font-bold">{{ summary.published }}</p></article>
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Requests to review</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_visits }}</p></article>
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Total visits</p><p class="mt-1 text-3xl font-bold">{{ summary.total_visits }}</p></article>
+      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Booking requests</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_reservations }}</p></article>
     {% else %}
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Saved places</p><p class="mt-1 text-3xl font-bold">{{ summary.saved }}</p></article>
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Requests awaiting reply</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_visits }}</p></article>
       <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Confirmed visits</p><p class="mt-1 text-3xl font-bold">{{ summary.confirmed_visits }}</p></article>
+      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Booking requests</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_reservations }}</p></article>
+      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Confirmed bookings</p><p class="mt-1 text-3xl font-bold">{{ summary.confirmed_reservations }}</p></article>
     {% endif %}
   </section>
   {% if user.role == "landlord" %}
@@ -59,6 +62,33 @@
       {% endif %}
     </section>
   {% endif %}
+  <section class="mb-12">
+    <div class="mb-4"><h2 class="text-2xl font-bold">{% if user.role == "landlord" %}Booking requests{% else %}Your bookings{% endif %}</h2></div>
+    {% if reservations %}
+      <div class="grid gap-3">
+        {% for reservation in reservations %}
+          <article class="flex flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-5 sm:flex-row sm:items-center">
+            <div>
+              <p class="eyebrow">{{ reservation.property.get_property_type_display }} · {{ reservation.property.city }}</p>
+              <h3 class="font-bold"><a class="text-ink hover:text-brand-600" href="{% url 'property_detail' reservation.property.pk %}">{{ reservation.property.title }}</a></h3>
+              <p class="mt-1">Requested stay: {{ reservation.start_date|date:"j M Y" }} – {{ reservation.end_date|date:"j M Y" }} · <span class="rounded-full px-2.5 py-1 text-xs font-bold {% if reservation.status == 'confirmed' %}bg-emerald-100 text-emerald-800{% elif reservation.status == 'requested' %}bg-amber-100 text-amber-800{% elif reservation.status == 'declined' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-700{% endif %}">{{ reservation.get_status_display }}</span></p>
+              {% if user.role == "landlord" %}<p>Requested by {{ reservation.renter.get_full_name|default:reservation.renter.username }} ({{ reservation.renter.email }})</p>{% else %}<p>Service provider: {{ reservation.property.owner.get_full_name|default:reservation.property.owner.username }}</p>{% endif %}
+              {% if reservation.message %}<p class="mt-2 italic text-muted">“{{ reservation.message }}”</p>{% endif %}
+              <p class="mt-2 text-sm text-muted">Rent: ₹{{ reservation.property.monthly_rent|floatformat:0 }} per month · Confirmation is subject to provider approval.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              {% if user.role == "landlord" and reservation.status == "requested" %}
+                <form method="post" action="{% url 'reservation_decide' reservation.pk %}">{% csrf_token %}<input type="hidden" name="status" value="confirmed"><button class="btn-secondary border-0 bg-brand-600 text-white hover:bg-brand-700" type="submit">Confirm</button></form>
+                <form method="post" action="{% url 'reservation_decide' reservation.pk %}">{% csrf_token %}<input type="hidden" name="status" value="declined"><button class="btn-secondary" type="submit">Decline</button></form>
+              {% elif user.role == "renter" and reservation.status == "requested" or user.role == "renter" and reservation.status == "confirmed" %}
+                <form method="post" action="{% url 'reservation_cancel' reservation.pk %}">{% csrf_token %}<button class="btn-secondary" type="submit">Cancel booking</button></form>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}<div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center"><h3 class="font-bold">No booking requests</h3><p class="mt-1 text-muted">{% if user.role == "landlord" %}Booking requests for your listings will appear here.{% else %}Browse rooms and send a booking request when you find the right place.{% endif %}</p></div>{% endif %}
+  </section>
   <section class="mb-12">
     <div class="mb-4"><h2 class="text-2xl font-bold">{% if user.role == "landlord" %}Visit requests{% else %}Your visit requests{% endif %}</h2></div>
     {% if visit_requests %}

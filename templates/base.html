@@ -18,10 +18,16 @@
         <svg data-menu-close-icon viewBox="0 0 24 24" class="hidden h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></svg>
       </button>
       <nav id="main-navigation" class="hidden w-full flex-col gap-1 border-t border-stone-100 pb-2 pt-3 text-sm font-semibold sm:flex sm:w-auto sm:flex-row sm:items-center sm:gap-6 sm:border-0 sm:p-0" aria-label="Main navigation">
-        <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'home' %}">Find a place</a>
+        <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'home' %}">Home</a>
+        <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'listings' %}">Listings</a>
+<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'contact' %}">Contact</a>
+<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'about' %}">About</a>
+        {% if not user.is_authenticated or user.role == "renter" %}
+          <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'home' %}">Browse rooms</a>
+        {% endif %}
         {% if user.is_authenticated %}
           <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'dashboard' %}">Dashboard</a>
-          {% if user.role == "landlord" %}<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'property_create' %}">List a property</a>{% endif %}
+          {% if user.role == "landlord" %}<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'property_create' %}">Add a room</a>{% endif %}
           <form class="px-3 py-2 sm:px-0 sm:py-0" method="post" action="{% url 'logout' %}">
             {% csrf_token %}<button class="cursor-pointer border-0 bg-transparent p-0 text-ink hover:text-brand-600" type="submit">Log out</button>
           </form>

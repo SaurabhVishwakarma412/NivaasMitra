@@ -11,7 +11,14 @@ from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
 
-from .models import Property, PropertyImage, SavedProperty, User, VisitRequest
+from .models import (
+    Property,
+    PropertyImage,
+    Reservation,
+    SavedProperty,
+    User,
+    VisitRequest,
+)
 
 
 class RentalWorkflowTests(TestCase):
@@ -141,13 +148,136 @@ class RentalWorkflowTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_public_listing_page_has_mobile_viewing_action(self):
+    def test_public_listing_page_offers_login_for_booking_and_visits(self):
         response = self.client.get(
             reverse("property_detail", args=[self.listing.pk])
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Log in to request a viewing")
+        self.assertContains(response, "Log in to book this place")
+        self.assertContains(response, "request a visit")
+
+    def test_navigation_and_about_page_are_available(self):
+        response = self.client.get(reverse("about"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "About RentHouse")
+        self.assertContains(response, "Browse rooms")
+
+        response = self.client.get(reverse("home"))
+        self.assertContains(response, "href=\"/about/\"")
+
+    def test_login_requires_the_selected_account_role(self):
+        self.renter.set_password("test-password-123")
+        self.renter.save()
+
+        response = self.client.post(
+            reverse("login"),
+            {
+                "username": self.renter.username,
+                "password": "test-password-123",
+                "role": User.Role.LANDLORD,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, "valid credentials for the selected account type"
+        )
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+        response = self.client.post(
+            reverse("login"),
+            {
+                "username": self.renter.username,
+                "password": "test-password-123",
+                "role": User.Role.RENTER,
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertEqual(
+            self.client.session["_auth_user_id"], str(self.renter.pk)
+        )
+
+    def test_renter_can_request_a_booking_and_owner_can_confirm_it(self):
+        self.client.force_login(self.renter)
+        start_date = timezone.localdate() + timedelta(days=5)
+        end_date = start_date + timedelta(days=30)
+
+        response = self.client.post(
+            reverse("reservation_create", args=[self.listing.pk]),
+            {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "message": "Please confirm these dates.",
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        reservation = Reservation.objects.get(property=self.listing)
+        self.assertEqual(reservation.renter, self.renter)
+        self.assertEqual(reservation.status, Reservation.Status.REQUESTED)
+
+        self.client.force_login(self.landlord)
+        landlord_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(landlord_dashboard, "Booking requests")
+        self.assertContains(landlord_dashboard, "Please confirm these dates.")
+        response = self.client.post(
+            reverse("reservation_decide", args=[reservation.pk]),
+            {"status": Reservation.Status.CONFIRMED},
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CONFIRMED)
+
+        self.client.force_login(self.renter)
+        renter_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(renter_dashboard, "Confirmed bookings")
+        self.assertContains(renter_dashboard, "Confirmed")
+        response = self.client.post(
+            reverse("reservation_cancel", args=[reservation.pk])
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CANCELLED)
+
+    def test_renter_cannot_request_overlapping_dates_or_invalid_dates(self):
+        self.client.force_login(self.renter)
+        start_date = timezone.localdate() + timedelta(days=5)
+        end_date = start_date + timedelta(days=15)
+        Reservation.objects.create(
+            property=self.listing,
+            renter=self.renter,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        response = self.client.post(
+            reverse("reservation_create", args=[self.listing.pk]),
+            {
+                "start_date": (start_date + timedelta(days=2)).isoformat(),
+                "end_date": (end_date + timedelta(days=2)).isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "overlap another active booking request")
+        self.assertEqual(Reservation.objects.count(), 1)
+
+        response = self.client.post(
+            reverse("reservation_create", args=[self.listing.pk]),
+            {
+                "start_date": end_date.isoformat(),
+                "end_date": start_date.isoformat(),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Check-out must be after check-in.")
+        self.assertEqual(Reservation.objects.count(), 1)
 
     def test_landlord_cannot_edit_another_landlords_listing(self):
         self.client.force_login(self.other_landlord)
