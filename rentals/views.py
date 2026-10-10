@@ -390,19 +390,31 @@ def visit_request_create(request, pk):
         visit_request = form.save(commit=False)
         visit_request.property = property_listing
         visit_request.renter = request.user
-        try:
-            visit_request.save()
-        except IntegrityError:
+        has_open_request = VisitRequest.objects.filter(
+            property=property_listing,
+            renter=request.user,
+            status__in=[VisitRequest.Status.REQUESTED, VisitRequest.Status.CONFIRMED],
+        ).exists()
+        if has_open_request:
             form.add_error(
                 None,
                 "You already have an open visit request for this property. "
                 "Cancel or finish it before requesting another.",
             )
-        except ValidationError as error:
-            form.add_error(None, error)
         else:
-            messages.success(request, "Visit request sent to the landlord.")
-            return redirect("dashboard")
+            try:
+                visit_request.save()
+            except IntegrityError:
+                form.add_error(
+                    None,
+                    "You already have an open visit request for this property. "
+                    "Cancel or finish it before requesting another.",
+                )
+            except ValidationError as error:
+                form.add_error(None, error)
+            else:
+                messages.success(request, "Visit request sent to the landlord.")
+                return redirect("dashboard")
     return render(
         request,
         "rentals/property_detail.html",

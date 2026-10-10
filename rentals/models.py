@@ -144,6 +144,20 @@ class VisitRequest(models.Model):
                 raise ValidationError(
                     {"renter": "You cannot request a visit to your own property."}
                 )
+            if self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}:
+                duplicate_open_request = type(self).objects.filter(
+                    property_id=self.property_id,
+                    renter_id=self.renter_id,
+                    status__in=[self.Status.REQUESTED, self.Status.CONFIRMED],
+                )
+                if self.pk:
+                    duplicate_open_request = duplicate_open_request.exclude(pk=self.pk)
+                if duplicate_open_request.exists():
+                    raise ValidationError(
+                        {
+                            "__all__": "You already have an open visit request for this property. Cancel or finish it before requesting another."
+                        }
+                    )
 
     def save(self, *args, **kwargs):
         self.full_clean(validate_unique=False, validate_constraints=False)
