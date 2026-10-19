@@ -1,267 +1,202 @@
-from django.conf import settings
-from django.contrib.auth.models import AbstractUser
-from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
-from django.db import models
-from django.db.models import Q
-from django.utils import timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
+from typing import Any
 
 
-class User(AbstractUser):
-    class Role(models.TextChoices):
-        RENTER = "renter", "Home seeker"
-        LANDLORD = "landlord", "Service provider"
+class UserRole(StrEnum):
+    RENTER = "renter"
+    LANDLORD = "landlord"
 
-    email = models.EmailField(unique=True)
-    role = models.CharField(max_length=10, choices=Role.choices, default=Role.RENTER)
-
-    def __str__(self):
-        return self.get_full_name() or self.username
+    @classmethod
+    def choices(cls):
+        return [(item.value, "Home seeker" if item is cls.RENTER else "Service provider") for item in cls]
 
 
-class Property(models.Model):
-    class PropertyType(models.TextChoices):
-        HOUSE = "house", "House"
-        PG = "pg", "Paying guest"
-        HOSTEL = "hostel", "Hostel"
-        APARTMENT = "apartment", "Apartment"
+class PropertyType(StrEnum):
+    HOUSE = "house"
+    PG = "pg"
+    HOSTEL = "hostel"
+    APARTMENT = "apartment"
 
-    class Status(models.TextChoices):
-        DRAFT = "draft", "Draft"
-        PUBLISHED = "published", "Published"
-        PAUSED = "paused", "Paused"
-        ARCHIVED = "archived", "Archived"
-
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="properties",
-    )
-    title = models.CharField(max_length=120)
-    description = models.TextField(max_length=4000)
-    property_type = models.CharField(max_length=12, choices=PropertyType.choices)
-    monthly_rent = models.DecimalField(
-        max_digits=10, decimal_places=2, validators=[MinValueValidator(0.01)]
-    )
-    security_deposit = models.DecimalField(
-        max_digits=10, decimal_places=2, validators=[MinValueValidator(0)]
-    )
-    address = models.CharField(max_length=250)
-    city = models.CharField(max_length=100, db_index=True)
-    state = models.CharField(max_length=100)
-    postal_code = models.CharField(max_length=12)
-    bedrooms = models.PositiveSmallIntegerField(default=1)
-    bathrooms = models.PositiveSmallIntegerField(default=1)
-    available_from = models.DateField(default=timezone.localdate, db_index=True)
-    cover_image = models.ImageField(upload_to="properties/%Y/%m/", blank=True)
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.DRAFT, db_index=True
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        indexes = [
-            models.Index(fields=["status", "city", "property_type"]),
-            models.Index(fields=["status", "monthly_rent"]),
-        ]
-
-    def __str__(self):
-        return self.title
+    @classmethod
+    def choices(cls):
+        labels = {
+            cls.HOUSE: "House",
+            cls.PG: "Paying guest",
+            cls.HOSTEL: "Hostel",
+            cls.APARTMENT: "Apartment",
+        }
+        return [(item.value, labels[item]) for item in cls]
 
 
-class PropertyImage(models.Model):
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="gallery_images",
-    )
-    image = models.ImageField(upload_to="properties/gallery/%Y/%m/")
-    created_at = models.DateTimeField(auto_now_add=True)
+class PropertyStatus(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    PAUSED = "paused"
+    ARCHIVED = "archived"
 
-    class Meta:
-        ordering = ["created_at"]
-
-    def __str__(self):
-        return f"Photo for {self.property}"
+    @classmethod
+    def choices(cls):
+        return [(item.value, item.value.title()) for item in cls]
 
 
-class VisitRequest(models.Model):
-    class Status(models.TextChoices):
-        REQUESTED = "requested", "Requested"
-        CONFIRMED = "confirmed", "Confirmed"
-        DECLINED = "declined", "Declined"
-        CANCELLED = "cancelled", "Cancelled"
-        COMPLETED = "completed", "Completed"
-
-    property = models.ForeignKey(
-        Property, on_delete=models.PROTECT, related_name="visit_requests"
-    )
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="visit_requests",
-    )
-    scheduled_for = models.DateTimeField()
-    message = models.CharField(max_length=1000, blank=True)
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.REQUESTED, db_index=True
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["scheduled_for"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["property", "renter"],
-                condition=Q(status__in=["requested", "confirmed"]),
-                name="one_open_visit_per_renter_property",
-            )
-        ]
-
-    def clean(self):
-        super().clean()
-        scheduled_for_changed = self._state.adding
-        if self.pk and not self._state.adding:
-            previous_time = (
-                type(self).objects.filter(pk=self.pk)
-                .values_list("scheduled_for", flat=True)
-                .first()
-            )
-            scheduled_for_changed = previous_time != self.scheduled_for
-        if (
-            scheduled_for_changed
-            and self.scheduled_for
-            and self.scheduled_for <= timezone.now()
-        ):
-            raise ValidationError(
-                {"scheduled_for": "Choose a visit time in the future."}
-            )
-        if self.property_id and self.renter_id:
-            if self.property.owner_id == self.renter_id:
-                raise ValidationError(
-                    {"renter": "You cannot request a visit to your own property."}
-                )
-            if self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}:
-                duplicate_open_request = type(self).objects.filter(
-                    property_id=self.property_id,
-                    renter_id=self.renter_id,
-                    status__in=[self.Status.REQUESTED, self.Status.CONFIRMED],
-                )
-                if self.pk:
-                    duplicate_open_request = duplicate_open_request.exclude(pk=self.pk)
-                if duplicate_open_request.exists():
-                    raise ValidationError(
-                        {
-                            "__all__": "You already have an open visit request for this property. Cancel or finish it before requesting another."
-                        }
-                    )
-
-    def save(self, *args, **kwargs):
-        self.full_clean(validate_unique=False, validate_constraints=False)
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"Visit for {self.property} by {self.renter}"
+class RequestStatus(StrEnum):
+    REQUESTED = "requested"
+    CONFIRMED = "confirmed"
+    DECLINED = "declined"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
 
 
-class SavedProperty(models.Model):
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="saved_properties",
-    )
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="saved_by",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
+@dataclass
+class User:
+    class Role:
+        RENTER = UserRole.RENTER.value
+        LANDLORD = UserRole.LANDLORD.value
+        choices = UserRole.choices
 
-    class Meta:
-        ordering = ["-created_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["renter", "property"],
-                name="one_saved_property_per_renter",
-            )
-        ]
+    id: str
+    username: str
+    email: str
+    first_name: str
+    last_name: str
+    role: str
+    is_authenticated: bool = True
+    is_staff: bool = False
 
-    def __str__(self):
-        return f"{self.renter} saved {self.property}"
+    @property
+    def pk(self):
+        return self.id
+
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+    def get_role_display(self):
+        return "Home seeker" if self.role == UserRole.RENTER else "Service provider"
 
 
-class Reservation(models.Model):
-    class Status(models.TextChoices):
-        REQUESTED = "requested", "Requested"
-        CONFIRMED = "confirmed", "Confirmed"
-        DECLINED = "declined", "Declined"
-        CANCELLED = "cancelled", "Cancelled"
-        COMPLETED = "completed", "Completed"
+@dataclass
+class StoredImage:
+    name: str = ""
 
-    property = models.ForeignKey(
-        Property, on_delete=models.PROTECT, related_name="reservations"
-    )
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="reservations",
-    )
-    start_date = models.DateField()
-    end_date = models.DateField()
-    message = models.CharField(max_length=1000, blank=True)
-    status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.REQUESTED, db_index=True
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    @property
+    def url(self):
+        from django.conf import settings
 
-    class Meta:
-        ordering = ["start_date", "created_at"]
+        return f"{settings.MEDIA_URL}{self.name}" if self.name else ""
 
-    def clean(self):
-        super().clean()
-        errors = {}
-        today = timezone.localdate()
+    def __bool__(self):
+        return bool(self.name)
 
-        if (
-            self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}
-            and self.start_date
-            and self.start_date < today
-        ):
-            errors["start_date"] = "Check-in date cannot be in the past."
-        if self.start_date and self.end_date and self.end_date <= self.start_date:
-            errors["end_date"] = "Check-out must be after check-in."
-        if self.property_id and self.renter_id:
-            if self.property.owner_id == self.renter_id:
-                errors["renter"] = "You cannot book your own listing."
-            if self.status in {self.Status.REQUESTED, self.Status.CONFIRMED}:
-                if self.start_date and self.start_date < self.property.available_from:
-                    errors["start_date"] = "This place is not available by that date."
-                if self.property.status != Property.Status.PUBLISHED:
-                    errors["property"] = "This listing is not currently available."
-                if self.start_date and self.end_date and self.end_date > self.start_date:
-                    conflicts = type(self).objects.filter(
-                        property_id=self.property_id,
-                        status__in=[self.Status.REQUESTED, self.Status.CONFIRMED],
-                        start_date__lt=self.end_date,
-                        end_date__gt=self.start_date,
-                    )
-                    if self.pk:
-                        conflicts = conflicts.exclude(pk=self.pk)
-                    if conflicts.exists():
-                        errors["start_date"] = (
-                            "These dates overlap another active booking request."
-                        )
 
-        if errors:
-            raise ValidationError(errors)
+@dataclass
+class Property:
+    PropertyType = PropertyType
+    Status = PropertyStatus
 
-    def save(self, *args, **kwargs):
-        self.full_clean(validate_unique=False, validate_constraints=False)
-        super().save(*args, **kwargs)
+    id: str
+    owner: User
+    title: str
+    description: str
+    property_type: str
+    monthly_rent: Decimal
+    security_deposit: Decimal
+    address: str
+    city: str
+    state: str
+    postal_code: str
+    bedrooms: int
+    bathrooms: int
+    available_from: date
+    status: str
+    cover_image: StoredImage = field(default_factory=StoredImage)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    gallery_images: list[Any] = field(default_factory=list)
+    visit_count: int = 0
 
-    def __str__(self):
-        return f"Reservation for {self.property} by {self.renter}"
+    @property
+    def pk(self):
+        return self.id
+
+    @property
+    def owner_id(self):
+        return self.owner.id
+
+    def get_status_display(self):
+        return self.status.title()
+
+    def get_property_type_display(self):
+        return {
+            PropertyType.HOUSE: "House",
+            PropertyType.PG: "Paying guest",
+            PropertyType.HOSTEL: "Hostel",
+            PropertyType.APARTMENT: "Apartment",
+        }.get(self.property_type, self.property_type.title())
+
+
+@dataclass
+class PropertyImage:
+    id: str
+    property_id: str
+    image: StoredImage
+    created_at: datetime
+
+    @property
+    def pk(self):
+        return self.id
+
+
+@dataclass
+class VisitRequest:
+    class Status:
+        REQUESTED = RequestStatus.REQUESTED.value
+        CONFIRMED = RequestStatus.CONFIRMED.value
+        DECLINED = RequestStatus.DECLINED.value
+        CANCELLED = RequestStatus.CANCELLED.value
+        COMPLETED = RequestStatus.COMPLETED.value
+
+    id: str
+    property: Property
+    renter: User
+    scheduled_for: datetime
+    message: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    @property
+    def pk(self):
+        return self.id
+
+    def get_status_display(self):
+        return self.status.title()
+
+
+@dataclass
+class Reservation:
+    class Status:
+        REQUESTED = RequestStatus.REQUESTED.value
+        CONFIRMED = RequestStatus.CONFIRMED.value
+        DECLINED = RequestStatus.DECLINED.value
+        CANCELLED = RequestStatus.CANCELLED.value
+        COMPLETED = RequestStatus.COMPLETED.value
+
+    id: str
+    property: Property
+    renter: User
+    start_date: date
+    end_date: date
+    message: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    @property
+    def pk(self):
+        return self.id
+
+    def get_status_display(self):
+        return self.status.title()

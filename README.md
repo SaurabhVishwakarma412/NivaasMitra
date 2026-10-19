@@ -1,13 +1,19 @@
 # RentHouse
 
-RentHouse is a Django rental and property-management MVP for houses,
-apartments, paying-guest accommodation, hostels and rooms. It has two account
-roles: **Service provider** (lists rentals) and **Home seeker** (searches and
-requests viewings and date-based bookings). Providers can publish detailed
-listings with a cover image and an eight-photo gallery; seekers can filter,
-sort and save places, request a viewing, and submit booking dates. Booking
-requests require provider confirmation; online payments are not implemented.
-The interface uses Tailwind CSS with restrained dark accents.
+RentHouse is a Django rental and property-management MVP using MongoDB through
+PyMongo. Application data is stored as MongoDB documents; Django ORM models,
+relational migrations, built-in auth/session tables, and the Django admin are
+not used. Django forms, templates, CSRF protection, and password hashing are
+retained. `pymongo` is an explicit project dependency in `requirements.txt`.
+
+RentHouse supports houses, apartments, paying-guest accommodation, hostels and
+rooms. It has two account roles: **Service provider** (lists rentals) and
+**Home seeker** (searches and requests viewings and date-based bookings).
+Providers can publish detailed listings with a cover image and an eight-photo
+gallery; seekers can filter, sort and save places, request a viewing, and
+submit booking dates. Booking requests require provider confirmation; online
+payments are not implemented. The interface uses Tailwind CSS with restrained
+dark accents.
 
 See [WORKFLOW.md](WORKFLOW.md) for the key user journeys, workflow rules, and
 local run instructions.
@@ -37,13 +43,14 @@ like this:
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 npm install
 npm run css:build
-.\venv\Scripts\python.exe manage.py migrate
-.\venv\Scripts\python.exe manage.py createsuperuser
 .\venv\Scripts\python.exe manage.py runserver
 ```
 
 Then visit `http://127.0.0.1:8000/`. Listings default to draft; select
 **Published** when adding or editing a landlord listing to make it searchable.
+Create user accounts through the signup page. The Django admin is intentionally
+disabled because application data is managed with PyMongo. Uploaded image
+files are stored under Django's `MEDIA_ROOT`; MongoDB stores their file paths.
 
 Run checks and tests with `.\venv\Scripts\python.exe manage.py check` and
 `.\venv\Scripts\python.exe manage.py test`.

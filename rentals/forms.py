@@ -1,10 +1,10 @@
 from django import forms
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
-from django.db import models
+from django.contrib.auth.hashers import check_password
 from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
 
 from .models import Property, Reservation, User, VisitRequest
+from .repository import find_user_by_email, find_user_by_username, get_image_count
 
 
 class MultipleImageInput(forms.ClearableFileInput):
@@ -23,58 +23,98 @@ class MultipleImageField(forms.ImageField):
         return [super().clean(upload, initial) for upload in uploads]
 
 
-class SignUpForm(UserCreationForm):
+class SignUpForm(forms.Form):
+    username = forms.CharField(max_length=150)
     email = forms.EmailField()
     first_name = forms.CharField(max_length=150)
     last_name = forms.CharField(max_length=150)
     role = forms.ChoiceField(
         label="How will you use RentHouse?",
-        choices=User.Role.choices,
+        choices=User.Role.choices(),
         widget=forms.RadioSelect(attrs={"class": "accent-brand-600"}),
     )
+    password1 = forms.CharField(
+        label="Password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
+    password2 = forms.CharField(
+        label="Confirm password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
 
-    class Meta(UserCreationForm.Meta):
-        model = User
-        fields = ("username", "email", "first_name", "last_name", "role")
+    def clean_username(self):
+        username = self.cleaned_data["username"].strip()
+        if find_user_by_username(username):
+            raise forms.ValidationError("That username is already taken.")
+        return username
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
-        if User.objects.filter(email__iexact=email).exists():
+        if find_user_by_email(email):
             raise forms.ValidationError("An account with this email already exists.")
         return email
 
+    def clean(self):
+        cleaned_data = super().clean()
+        password1 = cleaned_data.get("password1")
+        password2 = cleaned_data.get("password2")
+        if password1 and password2 and password1 != password2:
+            self.add_error("password2", "The two password fields didn’t match.")
+        return cleaned_data
 
-class RoleBasedAuthenticationForm(AuthenticationForm):
+
+class RoleBasedAuthenticationForm(forms.Form):
+    username = forms.CharField(max_length=150)
+    password = forms.CharField(
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "current-password"}),
+    )
     role = forms.ChoiceField(
         label="Log in as",
-        choices=User.Role.choices,
+        choices=User.Role.choices(),
         widget=forms.RadioSelect(attrs={"class": "accent-brand-600"}),
     )
 
     def clean(self):
         cleaned_data = super().clean()
-        user = getattr(self, "user_cache", None)
-        if user and user.role != cleaned_data.get("role"):
-            raise forms.ValidationError(
-                "Please enter valid credentials for the selected account type."
-            )
+        username = cleaned_data.get("username")
+        password = cleaned_data.get("password")
+        role = cleaned_data.get("role")
+        if username and password and role:
+            account = find_user_by_username(username)
+            if (
+                account is None
+                or not account.get("is_active", True)
+                or not check_password(password, account["password_hash"])
+                or account["role"] != role
+            ):
+                raise forms.ValidationError(
+                    "Please enter valid credentials for the selected account type."
+                )
+            self.user = account
         return cleaned_data
 
 
 class PropertySearchForm(forms.Form):
-    class SortOrder(models.TextChoices):
-        NEWEST = "newest", "Newest"
-        RENT_LOW = "rent_low", "Rent: low to high"
-        RENT_HIGH = "rent_high", "Rent: high to low"
-        AVAILABLE = "available", "Available soonest"
+    class SortOrder:
+        NEWEST = "newest"
+        RENT_LOW = "rent_low"
+        RENT_HIGH = "rent_high"
+        AVAILABLE = "available"
 
     city = forms.CharField(required=False, max_length=100)
     property_type = forms.ChoiceField(
         required=False,
-        choices=[("", "Any property type"), *Property.PropertyType.choices],
+        choices=[("", "Any property type"), *Property.PropertyType.choices()],
     )
-    min_rent = forms.DecimalField(required=False, min_value=0, max_digits=10, decimal_places=2)
-    max_rent = forms.DecimalField(required=False, min_value=0, max_digits=10, decimal_places=2)
+    min_rent = forms.DecimalField(
+        required=False, min_value=0, max_digits=10, decimal_places=2
+    )
+    max_rent = forms.DecimalField(
+        required=False, min_value=0, max_digits=10, decimal_places=2
+    )
     min_bedrooms = forms.IntegerField(
         required=False,
         min_value=1,
@@ -107,9 +147,9 @@ class PropertySearchForm(forms.Form):
 
     def clean(self):
         cleaned_data = super().clean()
-        min_rent = cleaned_data.get("min_rent")
-        max_rent = cleaned_data.get("max_rent")
-        if min_rent is not None and max_rent is not None and min_rent > max_rent:
+        minimum = cleaned_data.get("min_rent")
+        maximum = cleaned_data.get("max_rent")
+        if minimum is not None and maximum is not None and minimum > maximum:
             self.add_error("max_rent", "Maximum rent must be at least the minimum rent.")
         return cleaned_data
 
@@ -120,7 +160,22 @@ class PropertySearchForm(forms.Form):
         return move_in_date
 
 
-class PropertyForm(forms.ModelForm):
+class PropertyForm(forms.Form):
+    title = forms.CharField(max_length=120)
+    description = forms.CharField(max_length=4000, widget=forms.Textarea(attrs={"rows": 5}))
+    property_type = forms.ChoiceField(choices=Property.PropertyType.choices())
+    monthly_rent = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0.01)
+    security_deposit = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    address = forms.CharField(max_length=250)
+    city = forms.CharField(max_length=100)
+    state = forms.CharField(max_length=100)
+    postal_code = forms.CharField(max_length=12)
+    bedrooms = forms.IntegerField(min_value=1, max_value=20)
+    bathrooms = forms.IntegerField(min_value=1, max_value=20)
+    available_from = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    cover_image = forms.ImageField(required=False)
+    remove_cover_image = forms.BooleanField(required=False, label="Remove current cover photo")
+    status = forms.ChoiceField(choices=Property.Status.choices())
     additional_images = MultipleImageField(
         required=False,
         label="Additional property photos",
@@ -128,28 +183,23 @@ class PropertyForm(forms.ModelForm):
         widget=MultipleImageInput(),
     )
 
-    class Meta:
-        model = Property
-        fields = (
-            "title",
-            "description",
-            "property_type",
-            "monthly_rent",
-            "security_deposit",
-            "address",
-            "city",
-            "state",
-            "postal_code",
-            "bedrooms",
-            "bathrooms",
-            "available_from",
-            "cover_image",
-            "status",
-        )
-        widgets = {
-            "description": forms.Textarea(attrs={"rows": 5}),
-            "available_from": forms.DateInput(attrs={"type": "date"}),
-        }
+    def __init__(self, data=None, files=None, *, instance=None, **kwargs):
+        initial = dict(kwargs.pop("initial", {}) or {})
+        if instance:
+            initial.update(
+                {
+                    key: getattr(instance, key)
+                    for key in (
+                        "title", "description", "property_type", "monthly_rent",
+                        "security_deposit", "address", "city", "state", "postal_code",
+                        "bedrooms", "bathrooms", "available_from", "status",
+                    )
+                }
+            )
+        super().__init__(data=data, files=files, initial=initial, **kwargs)
+        self.instance = instance
+        if not instance or not instance.cover_image:
+            self.fields.pop("remove_cover_image")
 
     def clean_available_from(self):
         available_from = self.cleaned_data["available_from"]
@@ -157,72 +207,50 @@ class PropertyForm(forms.ModelForm):
             raise forms.ValidationError("Availability cannot be in the past.")
         return available_from
 
+    @staticmethod
+    def _validate_image(upload, *, filename):
+        if upload.size > 5 * 1024 * 1024:
+            raise forms.ValidationError(f"{filename} is larger than the 5 MB photo limit.")
+        if not isinstance(upload, UploadedFile):
+            raise forms.ValidationError("Choose a valid image file.")
+        try:
+            if upload.image.format not in {"JPEG", "PNG", "WEBP"}:
+                raise forms.ValidationError(f"{filename} must be a JPEG, PNG, or WebP image.")
+            width, height = upload.image.size
+        except forms.ValidationError:
+            raise
+        except (AttributeError, OSError, ValueError) as error:
+            raise forms.ValidationError(f"{filename} is not a readable image.") from error
+        if width * height > 20_000_000:
+            raise forms.ValidationError(f"{filename} is too large to display safely.")
+
     def clean_cover_image(self):
         cover = self.cleaned_data.get("cover_image")
-        if isinstance(cover, UploadedFile) and cover.size > 5 * 1024 * 1024:
-            raise forms.ValidationError("The main photo must be 5 MB or smaller.")
-        if isinstance(cover, UploadedFile):
-            if cover.image.format not in {"JPEG", "PNG", "WEBP"}:
-                raise forms.ValidationError(
-                    "The main photo must be a JPEG, PNG, or WebP image."
-                )
-            if cover.image.width * cover.image.height > 20_000_000:
-                raise forms.ValidationError(
-                    "The main photo is too large to display safely."
-                )
+        if cover:
+            self._validate_image(cover, filename="The main photo")
         return cover
 
     def clean_additional_images(self):
         photos = self.cleaned_data["additional_images"]
-        existing_photos = (
-            self.instance.gallery_images.count() if self.instance.pk else 0
-        )
-        if existing_photos + len(photos) > 8:
+        existing = get_image_count(self.instance.pk) if self.instance else 0
+        if existing + len(photos) > 8:
             raise forms.ValidationError(
                 f"This listing can have up to 8 additional photos. "
-                f"You can add {max(0, 8 - existing_photos)} more."
+                f"You can add {max(0, 8 - existing)} more."
             )
         for photo in photos:
-            if photo is None:
-                continue
-            if photo.size > 5 * 1024 * 1024:
-                raise forms.ValidationError(
-                    f"{photo.name} is larger than the 5 MB photo limit."
-                )
-            if not isinstance(photo, UploadedFile):
-                raise forms.ValidationError("Choose a valid image file.")
-            try:
-                if photo.image.format not in {"JPEG", "PNG", "WEBP"}:
-                    raise forms.ValidationError(
-                        f"{photo.name} must be a JPEG, PNG, or WebP image."
-                    )
-                width, height = photo.image.size
-            except forms.ValidationError:
-                raise
-            except (AttributeError, OSError, ValueError) as error:
-                raise forms.ValidationError(
-                    f"{photo.name} is not a readable image."
-                ) from error
-            if width * height > 20_000_000:
-                raise forms.ValidationError(
-                    f"{photo.name} is too large to display safely."
-                )
+            self._validate_image(photo, filename=photo.name)
         return photos
 
 
-class VisitRequestForm(forms.ModelForm):
+class VisitRequestForm(forms.Form):
     scheduled_for = forms.DateTimeField(
         input_formats=["%Y-%m-%dT%H:%M"],
         widget=forms.DateTimeInput(
-            attrs={"type": "datetime-local"},
-            format="%Y-%m-%dT%H:%M",
+            attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
         ),
     )
-
-    class Meta:
-        model = VisitRequest
-        fields = ("scheduled_for", "message")
-        widgets = {"message": forms.Textarea(attrs={"rows": 3})}
+    message = forms.CharField(required=False, max_length=1000, widget=forms.Textarea(attrs={"rows": 3}))
 
     def clean_scheduled_for(self):
         scheduled_for = self.cleaned_data["scheduled_for"]
@@ -231,38 +259,35 @@ class VisitRequestForm(forms.ModelForm):
         return scheduled_for
 
 
-class ReservationForm(forms.ModelForm):
-    class Meta:
-        model = Reservation
-        fields = ("start_date", "end_date", "message")
-        widgets = {
-            "start_date": forms.DateInput(attrs={"type": "date"}),
-            "end_date": forms.DateInput(attrs={"type": "date"}),
-            "message": forms.Textarea(attrs={"rows": 3}),
-        }
+class ReservationForm(forms.Form):
+    start_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    end_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    message = forms.CharField(required=False, max_length=1000, widget=forms.Textarea(attrs={"rows": 3}))
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        if start_date and start_date < timezone.localdate():
+            self.add_error("start_date", "Check-in cannot be in the past.")
+        if start_date and end_date and end_date <= start_date:
+            self.add_error("end_date", "Check-out must be after check-in.")
+        return cleaned_data
 
 
-class ReservationDecisionForm(forms.ModelForm):
-    class Meta:
-        model = Reservation
-        fields = ("status",)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["status"].choices = [
+class ReservationDecisionForm(forms.Form):
+    status = forms.ChoiceField(
+        choices=[
             (Reservation.Status.CONFIRMED, "Confirm"),
             (Reservation.Status.DECLINED, "Decline"),
         ]
+    )
 
 
-class VisitDecisionForm(forms.ModelForm):
-    class Meta:
-        model = VisitRequest
-        fields = ("status",)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["status"].choices = [
+class VisitDecisionForm(forms.Form):
+    status = forms.ChoiceField(
+        choices=[
             (VisitRequest.Status.CONFIRMED, "Confirm"),
             (VisitRequest.Status.DECLINED, "Decline"),
         ]
+    )
