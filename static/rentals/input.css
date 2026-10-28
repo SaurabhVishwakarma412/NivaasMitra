@@ -20,45 +20,109 @@
     @apply font-semibold tracking-tight;
   }
 
-  input:not([type="radio"]):not([type="checkbox"]):not([type="file"]), select, textarea {
+  input:not([type="radio"]):not([type="checkbox"]):not([type="file"]),
+  select,
+  textarea {
     @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-ink outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100;
   }
 
-  input[type="radio"], input[type="checkbox"] {
+  input[type="radio"],
+  input[type="checkbox"] {
     @apply h-4 w-4 shrink-0 accent-brand-600;
   }
 
   input[type="file"] {
     @apply block max-w-full text-sm text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:font-semibold file:text-brand-700 hover:file:bg-brand-100;
   }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-600;
+  }
 }
 
 @layer components {
+  /* ---------- Navigation ---------- */
+  .nav-link {
+    @apply rounded-lg px-3 py-2 text-ink transition hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent;
+  }
+  .nav-link-active {
+    @apply bg-brand-50 text-brand-600 sm:bg-transparent sm:underline sm:decoration-2 sm:underline-offset-8;
+  }
+
+  /* ---------- Buttons ---------- */
   .btn-primary {
-    @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-600 px-5 py-2 font-semibold text-white transition hover:bg-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 py-2 font-semibold text-white shadow-sm transition hover:bg-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-60;
   }
-
   .btn-secondary {
-    @apply inline-flex min-h-9 items-center justify-center rounded-lg border border-stone-300 bg-white px-3 py-1.5 font-semibold text-ink transition hover:bg-stone-100;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-stone-300 bg-white px-4 py-2 font-semibold text-ink transition hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-danger {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-rose-200 bg-white px-4 py-2 font-semibold text-rose-700 transition hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-600;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg px-3 py-2 font-semibold text-ink transition hover:bg-stone-100;
   }
 
+  /* ---------- Forms ---------- */
   .form-label {
     @apply grid gap-1.5 text-sm font-semibold text-stone-700;
   }
-
   .field-error {
     @apply text-sm font-medium text-rose-700;
   }
-
   .eyebrow {
     @apply mb-2 text-xs font-bold tracking-[0.14em] text-brand-600;
   }
 
-  .stat-card {
-    @apply rounded-xl bg-slate-950 p-5 text-white shadow-sm;
+  /* ---------- Cards ---------- */
+  .card {
+    @apply rounded-xl border border-stone-200 bg-white shadow-sm;
+  }
+  .summary-card {
+    @apply block rounded-xl bg-slate-950 p-5 text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600;
+  }
+  .summary-label {
+    @apply text-sm text-slate-300;
+  }
+  .summary-value {
+    @apply mt-1 text-3xl font-bold;
   }
 
+  /* ---------- Badges ---------- */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold;
+  }
+  .badge-published,
+  .badge-confirmed {
+    @apply bg-emerald-100 text-emerald-800;
+  }
+  .badge-pending,
+  .badge-requested {
+    @apply bg-amber-100 text-amber-800;
+  }
+  .badge-declined,
+  .badge-cancelled {
+    @apply bg-rose-100 text-rose-800;
+  }
+  .badge-draft,
+  .badge-archived {
+    @apply bg-stone-100 text-stone-700;
+  }
+
+  /* ---------- Utility ---------- */
   .mobile-safe {
     @apply min-w-0 max-w-full;
+  }
+  .field-hint {
+    @apply text-xs font-normal text-muted;
+  }
+  .empty-state {
+    @apply rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center;
+  }
+  .section-title {
+    @apply text-2xl font-bold;
+  }
+  .link {
+    @apply font-semibold text-brand-600 hover:underline;
   }
 }

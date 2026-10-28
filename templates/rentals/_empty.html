@@ -1,0 +1,8 @@
+{# Expects: title, body, and optionally action_url, action_label #}
+<div class="empty-state">
+  <h3 class="font-bold">{{ title }}</h3>
+  <p class="mt-1 text-muted">{{ body }}</p>
+  {% if action_url %}
+    <a class="btn-primary mt-4" href="{{ action_url }}">{{ action_label }}</a>
+  {% endif %}
+</div>

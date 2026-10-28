@@ -1,9 +1,14 @@
+import logging
+import smtplib
 from functools import wraps
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.hashers import make_password
+from django.contrib.auth import login as auth_login
+from django.contrib.auth import logout as auth_logout
 from django.core.files.storage import default_storage
+from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.http import Http404
 from django.shortcuts import redirect, render
@@ -12,6 +17,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .forms import (
+    ContactForm,
     PropertyForm,
     PropertySearchForm,
     ReservationDecisionForm,
@@ -21,7 +27,6 @@ from .forms import (
     VisitDecisionForm,
     VisitRequestForm,
 )
-from .middleware import AUTH_COOKIE_NAME, set_auth_cookie
 from .models import Property, Reservation, User, VisitRequest
 from .repository import (
     count_visits_for_property,
@@ -33,7 +38,6 @@ from .repository import (
     delete_property_image,
     get_property,
     get_reservation,
-    get_user,
     get_visit,
     list_properties,
     list_reservations,
@@ -46,6 +50,8 @@ from .repository import (
     update_reservation_status,
     update_visit_status,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def require_login(view):
@@ -91,8 +97,10 @@ def home(request):
         {
             "search_form": search_form,
             "properties": properties,
+            "featured": properties[:6],
             "results_count": len(properties),
             "saved_property_ids": saved_ids,
+            "listings_url": reverse("listings"),
         },
     )
 
@@ -101,6 +109,8 @@ def listings(request):
     search_form, results, saved_ids = _search_context(request)
     paginator = Paginator(results, 12)
     page_obj = paginator.get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
     return render(
         request,
         "rentals/listings.html",
@@ -110,6 +120,7 @@ def listings(request):
             "page_obj": page_obj,
             "results_count": len(results),
             "saved_property_ids": saved_ids,
+            "base_qs": query.urlencode(),
         },
     )
 
@@ -131,14 +142,14 @@ def sign_up(request):
                 first_name=data["first_name"],
                 last_name=data["last_name"],
                 role=data["role"],
-                password_hash=make_password(data["password1"]),
+                password=data["password1"],
             )
         except ValueError as error:
             form.add_error(None, str(error))
         else:
             messages.success(request, "Your account is ready.")
-            response = redirect("dashboard")
-            return set_auth_cookie(response, user)
+            auth_login(request, user)
+            return redirect("dashboard")
     return render(request, "registration/signup.html", {"form": form})
 
 
@@ -148,8 +159,8 @@ def login_view(request):
     form = RoleBasedAuthenticationForm(request.POST or None)
     next_url = request.POST.get("next") or request.GET.get("next", "")
     if request.method == "POST" and form.is_valid():
-        account = form.user
-        user = get_user(account["_id"])
+        user = form.user
+        auth_login(request, user)
         if next_url and url_has_allowed_host_and_scheme(
             next_url,
             allowed_hosts={request.get_host()},
@@ -158,7 +169,7 @@ def login_view(request):
             response = redirect(next_url)
         else:
             response = redirect("dashboard")
-        return set_auth_cookie(response, user)
+        return response
     return render(
         request,
         "registration/login.html",
@@ -168,13 +179,51 @@ def login_view(request):
 
 @require_POST
 def logout_view(request):
+    auth_logout(request)
     response = redirect("home")
-    response.delete_cookie(AUTH_COOKIE_NAME, samesite="Lax")
     return response
 
 
 def contact(request):
-    return render(request, "rentals/contact.html")
+    form = ContactForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        data = form.cleaned_data
+        subject = data["subject"].strip() or f"Message from {data['name']}"
+        body = (
+            f"From: {data['name']} <{data['email']}>\n\n"
+            f"{data['message']}"
+        )
+        try:
+            sent_count = send_mail(
+                subject=f"RentHouse contact: {subject}",
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[settings.CONTACT_EMAIL],
+                fail_silently=False,
+            )
+        except (OSError, smtplib.SMTPException):
+            logger.exception("Could not send a RentHouse contact message")
+            messages.error(
+                request,
+                "We couldn't send your message right now. Please try again later or email us directly.",
+            )
+        else:
+            if sent_count == 1:
+                messages.success(
+                    request,
+                    "Thanks for getting in touch. Your message has been sent.",
+                )
+                return redirect("contact")
+            logger.error("The configured email backend did not send the contact message")
+            messages.error(
+                request,
+                "We couldn't send your message right now. Please try again later or email us directly.",
+            )
+    return render(
+        request,
+        "rentals/contact.html",
+        {"form": form, "contact_email": settings.CONTACT_EMAIL},
+    )
 
 
 def _property_or_404(pk, *, owner_id=None, status=None, with_gallery=False):
@@ -252,6 +301,9 @@ def dashboard(request):
             "reservations": reservations,
             "saved_properties": saved_properties,
             "summary": summary,
+            "role": "provider" if request.user.role == User.Role.LANDLORD else "seeker",
+            "listings_url": reverse("listings"),
+            "property_create_url": reverse("property_create"),
         },
     )
 
@@ -323,7 +375,7 @@ def property_image_delete(request, pk, image_pk):
     image = delete_property_image(property_listing.pk, image_pk)
     if image is None:
         raise Http404
-    default_storage.delete(image["image"])
+    default_storage.delete(image.image.name)
     messages.success(request, "The property photo has been removed.")
     return redirect("property_edit", pk=property_listing.pk)
 
@@ -429,7 +481,7 @@ def visit_request_cancel(request, pk):
     visit = get_visit(
         pk,
         renter_id=request.user.id,
-        status={"$in": [VisitRequest.Status.REQUESTED, VisitRequest.Status.CONFIRMED]},
+        status=[VisitRequest.Status.REQUESTED, VisitRequest.Status.CONFIRMED],
     )
     if visit is None:
         raise Http404
@@ -490,7 +542,7 @@ def reservation_cancel(request, pk):
     reservation = get_reservation(
         pk,
         renter_id=request.user.id,
-        status={"$in": [Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED]},
+        status=[Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED],
     )
     if reservation is None:
         raise Http404

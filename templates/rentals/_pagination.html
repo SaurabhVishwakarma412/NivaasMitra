@@ -1,0 +1,41 @@
+{# Expects: page_obj, plus current query string; pass base_qs = request.GET.urlencode with page stripped #}
+{% if page_obj.paginator.num_pages > 1 %}
+  <nav class="mt-8 flex justify-center" aria-label="Pagination">
+    <ul class="inline-flex items-center -space-x-px text-sm">
+      {% if page_obj.has_previous %}
+        <li>
+          <a href="?page={{ page_obj.previous_page_number }}{% if base_qs %}&{{ base_qs }}{% endif %}"
+             class="inline-flex min-h-10 items-center rounded-l-lg border border-stone-300 bg-white px-3 py-2 text-muted hover:bg-stone-100">
+            Previous
+          </a>
+        </li>
+      {% endif %}
+
+      {% for num in page_obj.paginator.page_range %}
+        {% if page_obj.number == num %}
+          <li>
+            <span class="inline-flex min-h-10 items-center border border-brand-600 bg-brand-600 px-3 py-2 font-semibold text-white">
+              {{ num }}
+            </span>
+          </li>
+        {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+          <li>
+            <a href="?page={{ num }}{% if base_qs %}&{{ base_qs }}{% endif %}"
+               class="inline-flex min-h-10 items-center border border-stone-300 bg-white px-3 py-2 text-muted hover:bg-stone-100">
+              {{ num }}
+            </a>
+          </li>
+        {% endif %}
+      {% endfor %}
+
+      {% if page_obj.has_next %}
+        <li>
+          <a href="?page={{ page_obj.next_page_number }}{% if base_qs %}&{{ base_qs }}{% endif %}"
+             class="inline-flex min-h-10 items-center rounded-r-lg border border-stone-300 bg-white px-3 py-2 text-muted hover:bg-stone-100">
+            Next
+          </a>
+        </li>
+      {% endif %}
+    </ul>
+  </nav>
+{% endif %}

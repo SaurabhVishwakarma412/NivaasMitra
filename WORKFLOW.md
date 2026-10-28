@@ -1,9 +1,61 @@
 # RentHouse workflow
 
-RentHouse is a Django rental platform using PyMongo for MongoDB document
-persistence and Tailwind CSS. It has two account roles: **Service provider**
-lists rentals, and **Home seeker** searches, requests viewings, and submits
-date-based booking requests.
+RentHouse is a Django rental platform using Django's ORM, PostgreSQL, built-in
+authentication and sessions, and Tailwind CSS. It has two account roles:
+**Service provider** lists rentals, and **Home seeker** searches, requests
+viewings, and submits date-based booking requests.
+
+## Project structure
+
+```text
+NivaasMitra/
+├── config/                         # Django project configuration
+│   ├── __init__.py
+│   ├── asgi.py
+│   ├── settings.py                  # Settings, middleware, and installed apps
+│   ├── urls.py                      # Root URL routes
+│   └── wsgi.py
+├── rentals/                        # Main rental application
+│   ├── __init__.py
+│   ├── apps.py
+│   ├── forms.py                    # Form definitions and input validation
+│   ├── management/commands/        # One-time MongoDB export importer
+│   ├── migrations/                 # Django database migrations
+│   ├── models.py                   # Django ORM models and custom user
+│   ├── repository.py               # ORM queries and domain operations
+│   ├── tests.py                    # Application tests
+│   ├── urls.py                     # Rental app URL routes
+│   └── views.py                    # Request handlers
+├── static/
+│   └── rentals/                    # Front-end assets
+│       ├── hero-bg.jpg
+│       ├── hero1-bg.jpg
+│       ├── input.css               # Tailwind CSS source
+│       ├── site.css                # Compiled stylesheet
+│       └── site.js                 # Browser-side interactions
+├── templates/
+│   ├── registration/               # Account pages
+│   │   ├── login.html              # User sign-in form
+│   │   └── signup.html             # Account registration and role selection
+│   ├── rentals/                    # Rental and informational pages
+│   │   ├── about.html              # About page
+│   │   ├── contact.html            # Contact form and support information
+│   │   ├── dashboard.html          # User dashboard for listings and saved places
+│   │   ├── hero.html               # Landing-page hero section
+│   │   ├── home.html               # Home page with property search and results
+│   │   ├── listings.html           # Browse all available properties
+│   │   ├── property_detail.html    # Property details, photos, and requests
+│   │   └── property_form.html      # Create or edit a property listing
+│   └── base.html                   # Shared layout, navigation, and content blocks
+├── .env.example                    # Example environment configuration
+├── .gitignore
+├── manage.py                       # Django management entry point
+├── package.json                    # Tailwind CSS scripts and dependencies
+├── package-lock.json
+├── requirements.txt                # Python dependencies
+├── README.md                       # Project overview and setup
+└── WORKFLOW.md                     # User journeys and workflow rules
+```
 
 ## Main user journeys
 
@@ -46,62 +98,68 @@ date-based booking requests.
   property is allowed.
 - Forms validate user input and image uploads; role and ownership checks
   protect actions. State-changing forms use Django CSRF protection. Accounts
-  use Django password hashers and a signed, HTTP-only authentication cookie;
-  Django auth tables and sessions are not used.
-- Email/SMS notifications, payments, identity verification and maintenance
-  workflows are not implemented. Configure backups and production security
+  use Django password hashers, database-backed sessions, and Django's
+  authentication middleware.
+- Booking/visit email notifications, payments, identity verification and
+  maintenance workflows are not implemented. The contact form sends email
+  using the configured mail backend. Configure backups and production security
   before using real customer data.
 
-## MongoDB persistence
+## Django persistence
 
-All application records use PyMongo; Django ORM models, auth/session tables,
-and relational migrations are not used. The repository stores documents in
-these collections:
+Django's ORM stores the custom role-aware user, properties, gallery photos,
+saved properties, visits, reservations, and sessions in PostgreSQL. Django
+migrations create and evolve the relational schema. Connection values come
+from the `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`,
+and `POSTGRES_PORT` variables in `.env`. Uploaded image contents live in
+`MEDIA_ROOT`; PostgreSQL stores their relative paths.
 
-- `users` — account details and Django-compatible password hashes.
-- `properties` — listings, with owner references stored as MongoDB ObjectIds.
-- `property_images` — gallery image paths and their listing references.
-- `saved_properties` — renter-to-listing references.
-- `visit_requests` and `reservations` — requests with references to their
-  renter and listing.
+To preserve records from the existing SQLite database, migrate the PostgreSQL
+schema and run `manage.py import_sqlite_data`. The importer reads `db.sqlite3`
+without modifying it, requires the PostgreSQL rentals tables to be empty, and
+copies records atomically. See README.md for details.
 
-Collection indexes are created automatically on first database access.
-Uploaded image contents remain in Django's `MEDIA_ROOT`; MongoDB documents
-store their paths. User login uses a signed, HTTP-only cookie rather than a
-database-backed Django session.
+Existing MongoDB data is not deleted or accessed by the running app. To retain
+it, export the six collections as canonical Extended JSON using `mongoexport`,
+copy the old media files, and use the `import_mongo_export` management command.
+The importer reads exports without a MongoDB Python driver, preserves Django
+password hashes and Mongo listing IDs, and leaves the source database intact.
+Refer to README.md for the command example.
 
 ## How a request works
 
 ```text
 Browser -> rentals/urls.py -> rentals/views.py -> rentals/forms.py
-        -> rentals/repository.py -> MongoDB collections -> templates/
+        -> rentals/repository.py -> Django ORM -> PostgreSQL -> templates/
 ```
 
-URLs route requests to views. Views check authentication, role and ownership;
-forms validate submitted data; the PyMongo repository reads and writes MongoDB
-documents and enforces domain rules; templates render the response.
+URLs route requests to views. Django middleware authenticates sessions; views
+check role and ownership; forms validate submitted data; ORM query helpers
+enforce domain rules and read/write relational records; templates render the
+response.
 
 ## Run and verify locally
 
-Start MongoDB, then from the project folder run:
+From the project folder run:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
+Copy-Item .env.example .env
 python -m pip install -r requirements.txt
 npm install
 npm run css:build
+python manage.py migrate
 python manage.py runserver
 ```
 
-Open `http://127.0.0.1:8000/` and create accounts through the site. The Django
-admin is disabled because this project does not use Django ORM models. Check
-the project with:
+Before running migrations, update `POSTGRES_PASSWORD` in `.env` and create the
+configured database in PostgreSQL. See README.md for the database setup and
+the one-time SQLite data transfer steps.
+
+Open `http://127.0.0.1:8000/` and create accounts through the site. Check the
+project with:
 
 ```powershell
 python manage.py check
 python manage.py test
 ```
-
-Set `MONGODB_URI` and `MONGODB_DATABASE` to override the local MongoDB defaults.
-PyMongo creates the required collection indexes automatically. There is no
-`migrate` or `makemigrations` step for application data.

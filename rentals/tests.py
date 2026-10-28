@@ -1,54 +1,35 @@
-from io import BytesIO
+import io
+import json
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from uuid import uuid4
 
-from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
+from django.core import mail
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core import signing
-from django.test import SimpleTestCase, override_settings
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from PIL import Image
+from io import BytesIO
 
-from .middleware import AUTH_COOKIE_NAME, AUTH_COOKIE_SALT
-from .models import Property, Reservation, User, VisitRequest
+from .models import Property, PropertyImage, Reservation, SavedProperty, VisitRequest
 from .repository import (
     create_property,
     create_reservation,
-    create_user,
     create_visit,
-    database,
-    ensure_indexes,
     get_property,
-    get_reservation,
-    get_user,
-    get_visit,
     list_properties,
-    update_reservation_status,
 )
 
+User = get_user_model()
 
-class RentalWorkflowTests(SimpleTestCase):
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        cls.database_name = f"renthouse_test_{uuid4().hex}"
-        cls.mongo_settings = override_settings(MONGODB_DATABASE=cls.database_name)
-        cls.mongo_settings.enable()
 
-    @classmethod
-    def tearDownClass(cls):
-        database().client.drop_database(settings.MONGODB_DATABASE)
-        cls.mongo_settings.disable()
-        super().tearDownClass()
-
+class RentalWorkflowTests(TestCase):
     def setUp(self):
-        database().client.drop_database(settings.MONGODB_DATABASE)
-        ensure_indexes(force=True)
         self.renter = self.make_user("renter", User.Role.RENTER)
         self.landlord = self.make_user("landlord", User.Role.LANDLORD)
         self.other_landlord = self.make_user("other", User.Role.LANDLORD)
@@ -57,13 +38,13 @@ class RentalWorkflowTests(SimpleTestCase):
 
     @staticmethod
     def make_user(username, role):
-        return create_user(
+        return User.objects.create_user(
             username=username,
             email=f"{username}@example.com",
+            password="test-password-123",
             first_name=username.title(),
             last_name="User",
             role=role,
-            password_hash=make_password("test-password-123"),
         )
 
     def make_property(self, title, status):
@@ -83,21 +64,24 @@ class RentalWorkflowTests(SimpleTestCase):
                 "available_from": timezone.localdate(),
                 "status": status,
             },
-            self.landlord.id,
+            self.landlord.pk,
         )
 
     def login(self, user):
-        self.client.cookies[AUTH_COOKIE_NAME] = signing.dumps(
-            user.id, salt=AUTH_COOKIE_SALT
-        )
+        self.client.force_login(user)
 
-    def test_mongodb_search_filters_and_hides_drafts(self):
-        response = self.client.get(reverse("home"), {"city": "pune", "max_rent": "26000"})
+    def test_django_search_filters_and_hides_drafts(self):
+        response = self.client.get(
+            reverse("home"), {"city": "pune", "max_rent": "26000"}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Garden apartment")
         self.assertNotContains(response, "Private draft")
-        self.assertEqual(len(list_properties(status=Property.Status.PUBLISHED)), 1)
+        self.assertEqual(
+            len(list_properties(status=Property.Status.PUBLISHED)),
+            1,
+        )
 
     def test_homepage_shows_published_listings_without_search_filters(self):
         response = self.client.get(reverse("home"))
@@ -105,6 +89,56 @@ class RentalWorkflowTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Garden apartment")
         self.assertNotContains(response, "Private draft")
+
+    def test_listing_keyword_search_matches_property_details(self):
+        response = self.client.get(reverse("listings"), {"q": "bright apartment"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Garden apartment")
+        self.assertContains(response, "Keyword")
+        self.assertNotContains(response, "Private draft")
+
+    def test_contact_form_sends_validated_message_to_configured_inbox(self):
+        with override_settings(
+            EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+            DEFAULT_FROM_EMAIL="noreply@example.com",
+            CONTACT_EMAIL="support@example.com",
+        ):
+            response = self.client.post(
+                reverse("contact"),
+                {
+                    "name": "Alex Seeker",
+                    "email": "alex@example.com",
+                    "subject": "Question about a listing",
+                    "message": "Could you tell me more about this place?",
+                    "website": "",
+                },
+            )
+
+        self.assertRedirects(response, reverse("contact"))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["support@example.com"])
+        self.assertIn("alex@example.com", mail.outbox[0].body)
+
+    def test_contact_form_rejects_multiline_subject(self):
+        with override_settings(
+            EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+            DEFAULT_FROM_EMAIL="noreply@example.com",
+            CONTACT_EMAIL="support@example.com",
+        ):
+            response = self.client.post(
+                reverse("contact"),
+                {
+                    "name": "Alex Seeker",
+                    "email": "alex@example.com",
+                    "subject": "Question\r\nBcc: other@example.com",
+                    "message": "Could you tell me more about this place?",
+                    "website": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Enter a subject on a single line.")
 
     def test_invalid_search_does_not_return_all_properties(self):
         response = self.client.get(
@@ -115,7 +149,7 @@ class RentalWorkflowTests(SimpleTestCase):
         self.assertContains(response, "Maximum rent must be at least the minimum rent.")
         self.assertNotContains(response, "Garden apartment")
 
-    def test_user_authentication_uses_signed_cookie_and_enforces_role(self):
+    def test_login_uses_django_auth_and_enforces_account_role(self):
         response = self.client.post(
             reverse("login"),
             {
@@ -126,7 +160,6 @@ class RentalWorkflowTests(SimpleTestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "valid credentials for the selected account type")
-        self.assertNotIn(AUTH_COOKIE_NAME, self.client.cookies)
 
         response = self.client.post(
             reverse("login"),
@@ -137,18 +170,17 @@ class RentalWorkflowTests(SimpleTestCase):
             },
         )
         self.assertRedirects(response, reverse("dashboard"))
-        self.assertIn(AUTH_COOKIE_NAME, self.client.cookies)
-        self.assertEqual(get_user(self.renter.id).id, self.renter.id)
+        self.assertIn("sessionid", self.client.cookies)
         self.assertEqual(self.client.get(reverse("dashboard")).status_code, 200)
 
-    def test_logout_clears_the_authentication_cookie(self):
+    def test_logout_clears_the_django_session(self):
         self.login(self.renter)
         response = self.client.post(reverse("logout"))
 
         self.assertRedirects(response, reverse("home"))
-        self.assertEqual(response.cookies[AUTH_COOKIE_NAME].value, "")
+        self.assertNotIn("_auth_user_id", self.client.session)
 
-    def test_signup_persists_account_in_mongodb_and_logs_it_in(self):
+    def test_signup_persists_django_user_and_logs_it_in(self):
         response = self.client.post(
             reverse("signup"),
             {
@@ -157,16 +189,182 @@ class RentalWorkflowTests(SimpleTestCase):
                 "first_name": "New",
                 "last_name": "Owner",
                 "role": User.Role.LANDLORD,
+                "password1": "secure-test-password",
+                "password2": "secure-test-password",
+            },
+        )
+
+        self.assertRedirects(response, reverse("dashboard"))
+        user = User.objects.get(username="new-owner")
+        self.assertEqual(user.email, "new-owner@example.com")
+        self.assertEqual(user.role, User.Role.LANDLORD)
+        self.assertTrue(user.check_password("secure-test-password"))
+        self.assertEqual(self.client.session["_auth_user_id"], str(user.pk))
+
+    def test_signup_rejects_passwords_shorter_than_eight_characters(self):
+        response = self.client.post(
+            reverse("signup"),
+            {
+                "username": "short-password-user",
+                "email": "short-password@example.com",
+                "first_name": "Short",
+                "last_name": "Password",
+                "role": User.Role.RENTER,
                 "password1": "123",
                 "password2": "123",
             },
         )
 
-        self.assertRedirects(response, reverse("dashboard"))
-        user_doc = database().users.find_one({"username_lower": "new-owner"})
-        self.assertIsNotNone(user_doc)
-        self.assertEqual(user_doc["email"], "new-owner@example.com")
-        self.assertEqual(user_doc["role"], User.Role.LANDLORD)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "at least 8 characters")
+        self.assertFalse(User.objects.filter(username="short-password-user").exists())
+
+    def test_mongo_extended_json_export_import_preserves_related_records_and_media(self):
+        source_user_id = "aaaaaaaaaaaaaaaaaaaaaaaa"
+        source_owner_id = "ffffffffffffffffffffffff"
+        source_property_id = "bbbbbbbbbbbbbbbbbbbbbbbb"
+        source_image_id = "cccccccccccccccccccccccc"
+        source_visit_id = "dddddddddddddddddddddddd"
+        source_reservation_id = "eeeeeeeeeeeeeeeeeeeeeeee"
+        future_datetime = (timezone.now() + timedelta(days=4)).isoformat()
+        start_date = (timezone.localdate() + timedelta(days=5)).isoformat()
+        end_date = (timezone.localdate() + timedelta(days=8)).isoformat()
+        user_password = "legacy-account-password"
+
+        collections = {
+            "users": [
+                {
+                    "_id": {"$oid": source_user_id},
+                    "username": "legacy-renter",
+                    "email": "legacy@example.com",
+                    "first_name": "Legacy",
+                    "last_name": "Renter",
+                    "role": User.Role.RENTER,
+                    "password_hash": make_password(user_password),
+                    "is_active": True,
+                    "created_at": {"$date": "2024-01-01T00:00:00Z"},
+                },
+                {
+                    "_id": {"$oid": source_owner_id},
+                    "username": "legacy-landlord",
+                    "email": "legacy-landlord@example.com",
+                    "first_name": "Legacy",
+                    "last_name": "Landlord",
+                    "role": User.Role.LANDLORD,
+                    "password_hash": make_password("legacy-landlord-password"),
+                    "is_active": True,
+                    "created_at": {"$date": "2024-01-01T00:00:00Z"},
+                },
+            ],
+            "properties": [
+                {
+                    "_id": {"$oid": source_property_id},
+                    "owner_id": {"$oid": source_owner_id},
+                    "title": "Imported home",
+                    "description": "Imported from the old database.",
+                    "property_type": Property.PropertyType.APARTMENT,
+                    "monthly_rent": {"$numberDecimal": "24000.00"},
+                    "security_deposit": {"$numberDecimal": "48000.00"},
+                    "address": "1 Old Road",
+                    "city": "Pune",
+                    "state": "Maharashtra",
+                    "postal_code": "411001",
+                    "bedrooms": 2,
+                    "bathrooms": 1,
+                    "available_from": timezone.localdate().isoformat(),
+                    "status": Property.Status.PUBLISHED,
+                    "cover_image": "covers/legacy.png",
+                    "created_at": {"$date": "2024-01-02T00:00:00Z"},
+                    "updated_at": {"$date": "2024-01-03T00:00:00Z"},
+                }
+            ],
+            "property_images": [
+                {
+                    "_id": {"$oid": source_image_id},
+                    "property_id": {"$oid": source_property_id},
+                    "image": "gallery/legacy.png",
+                    "created_at": {"$date": "2024-01-04T00:00:00Z"},
+                }
+            ],
+            "saved_properties": [
+                {
+                    "_id": {"$oid": "222222222222222222222222"},
+                    "renter_id": {"$oid": source_user_id},
+                    "property_id": {"$oid": source_property_id},
+                }
+            ],
+            "visit_requests": [
+                {
+                    "_id": {"$oid": source_visit_id},
+                    "property_id": {"$oid": source_property_id},
+                    "renter_id": {"$oid": source_user_id},
+                    "scheduled_for": {"$date": future_datetime},
+                    "message": "Imported visit",
+                    "status": VisitRequest.Status.REQUESTED,
+                    "created_at": {"$date": "2024-01-05T00:00:00Z"},
+                    "updated_at": {"$date": "2024-01-05T00:00:00Z"},
+                }
+            ],
+            "reservations": [
+                {
+                    "_id": {"$oid": source_reservation_id},
+                    "property_id": {"$oid": source_property_id},
+                    "renter_id": {"$oid": source_user_id},
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "message": "Imported booking",
+                    "status": Reservation.Status.REQUESTED,
+                    "created_at": {"$date": "2024-01-06T00:00:00Z"},
+                    "updated_at": {"$date": "2024-01-06T00:00:00Z"},
+                }
+            ],
+        }
+
+        with TemporaryDirectory() as export_directory, TemporaryDirectory() as source_media:
+            for collection, documents in collections.items():
+                export_path = Path(export_directory) / f"{collection}.json"
+                export_path.write_text(
+                    "".join(json.dumps(document) + "\n" for document in documents),
+                    encoding="utf-8",
+                )
+            for relative_path in ("covers/legacy.png", "gallery/legacy.png"):
+                media_path = Path(source_media) / relative_path
+                media_path.parent.mkdir(parents=True, exist_ok=True)
+                media_path.write_bytes(
+                    self.image_upload("photo.png").read()
+                )
+
+            with TemporaryDirectory() as imported_media:
+                with override_settings(MEDIA_ROOT=imported_media):
+                    call_command(
+                        "import_mongo_export",
+                        directory=export_directory,
+                        media_source=source_media,
+                        stdout=io.StringIO(),
+                    )
+
+                    imported_user = User.objects.get(username="legacy-renter")
+                    imported_property = Property.objects.get(pk=source_property_id)
+                    imported_visit = VisitRequest.objects.get(pk=source_visit_id)
+                    imported_reservation = Reservation.objects.get(
+                        pk=source_reservation_id
+                    )
+
+                    self.assertTrue(imported_user.check_password(user_password))
+                    self.assertEqual(
+                        imported_property.owner.username,
+                        "legacy-landlord",
+                    )
+                    self.assertEqual(imported_property.gallery.count(), 1)
+                    self.assertEqual(imported_property.saved_by.count(), 1)
+                    self.assertEqual(imported_visit.renter, imported_user)
+                    self.assertEqual(imported_reservation.renter, imported_user)
+                    self.assertTrue(
+                        (Path(imported_media) / "covers/legacy.png").is_file()
+                    )
+                    self.assertTrue(
+                        (Path(imported_media) / "gallery/legacy.png").is_file()
+                    )
 
     def test_owner_can_publish_draft_but_another_owner_cannot_edit_it(self):
         self.login(self.other_landlord)
@@ -179,27 +377,39 @@ class RentalWorkflowTests(SimpleTestCase):
             {"status": Property.Status.PUBLISHED},
         )
         self.assertRedirects(response, reverse("dashboard"))
-        self.assertEqual(
-            get_property(self.draft.pk).status, Property.Status.PUBLISHED
-        )
+        self.assertEqual(get_property(self.draft.pk).status, Property.Status.PUBLISHED)
+
+    def test_provider_dashboard_uses_supported_listing_status_actions(self):
+        self.login(self.landlord)
+
+        response = self.client.get(reverse("dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Garden apartment")
+        self.assertContains(response, "Pause")
+        self.assertContains(response, "Publish")
+        self.assertContains(response, "Booking requests")
+        self.assertContains(response, "Visit requests")
 
     def test_renter_can_save_and_remove_a_listing(self):
         self.login(self.renter)
-        save_url = reverse("saved_property_toggle", args=[self.listing.pk])
-        response = self.client.post(save_url, {"action": "save"})
+        detail = self.client.get(reverse("property_detail", args=[self.listing.pk]))
+        self.assertEqual(detail.status_code, 200)
+        save_action = reverse("saved_property_toggle", args=[self.listing.pk])
+        booking_action = reverse("reservation_create", args=[self.listing.pk])
+        visit_action = reverse("visit_request_create", args=[self.listing.pk])
+        self.assertContains(detail, f'action="{save_action}"')
+        self.assertContains(detail, f'action="{booking_action}"')
+        self.assertContains(detail, f'action="{visit_action}"')
 
+        response = self.client.post(save_action, {"action": "save"})
         self.assertRedirects(response, reverse("property_detail", args=[self.listing.pk]))
-        self.assertEqual(
-            database().saved_properties.count_documents(
-                {"renter_id": database().users.find_one({"username": "renter"})["_id"]}
-            ),
-            1,
-        )
+        self.assertEqual(SavedProperty.objects.filter(renter=self.renter).count(), 1)
         self.assertContains(self.client.get(reverse("dashboard")), "Garden apartment")
 
-        response = self.client.post(save_url, {"action": "remove"})
+        response = self.client.post(save_action, {"action": "remove"})
         self.assertRedirects(response, reverse("property_detail", args=[self.listing.pk]))
-        self.assertEqual(database().saved_properties.count_documents({}), 0)
+        self.assertEqual(SavedProperty.objects.count(), 0)
 
     def test_renter_visit_request_is_validated_and_unique_while_open(self):
         self.login(self.renter)
@@ -207,9 +417,9 @@ class RentalWorkflowTests(SimpleTestCase):
         response = self.client.post(
             reverse("visit_request_create", args=[self.listing.pk]),
             {
-                "scheduled_for": timezone.localtime(visit_time).replace(
-                    second=0, microsecond=0
-                ).strftime("%Y-%m-%dT%H:%M"),
+                "scheduled_for": timezone.localtime(visit_time)
+                .replace(second=0, microsecond=0)
+                .strftime("%Y-%m-%dT%H:%M"),
                 "message": "After work",
             },
         )
@@ -219,15 +429,26 @@ class RentalWorkflowTests(SimpleTestCase):
         response = self.client.post(
             reverse("visit_request_create", args=[self.listing.pk]),
             {
-                "scheduled_for": timezone.localtime(duplicate_time).replace(
-                    second=0, microsecond=0
-                ).strftime("%Y-%m-%dT%H:%M"),
+                "scheduled_for": timezone.localtime(duplicate_time)
+                .replace(second=0, microsecond=0)
+                .strftime("%Y-%m-%dT%H:%M"),
             },
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "already have an open visit request")
-        visit = get_visit(database().visit_requests.find_one()["_id"])
+        visit = VisitRequest.objects.get()
         self.assertEqual(visit.status, VisitRequest.Status.REQUESTED)
+
+        renter_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(renter_dashboard, "Cancel")
+        self.login(self.landlord)
+        provider_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(provider_dashboard, "Requested by Renter User")
+        self.assertContains(provider_dashboard, "Confirm")
+        self.assertContains(
+            provider_dashboard,
+            f'action="{reverse("visit_request_decide", args=[visit.pk])}"',
+        )
 
     def test_reservation_conflicts_are_rejected_and_decisions_persist(self):
         self.login(self.renter)
@@ -242,32 +463,43 @@ class RentalWorkflowTests(SimpleTestCase):
             },
         )
         self.assertRedirects(response, reverse("dashboard"))
-        record = database().reservations.find_one()
-        reservation = get_reservation(record["_id"])
+        reservation = Reservation.objects.get()
         self.assertEqual(reservation.status, Reservation.Status.REQUESTED)
 
         with self.assertRaisesRegex(ValueError, "overlap another active"):
             create_reservation(
                 self.listing.pk,
-                self.renter.id,
+                self.renter.pk,
                 start + timedelta(days=1),
                 end + timedelta(days=1),
             )
 
+        self.login(self.renter)
+        renter_dashboard = self.client.get(reverse("dashboard"))
+        cancel_action = reverse("reservation_cancel", args=[reservation.pk])
+        self.assertContains(renter_dashboard, f'action="{cancel_action}"')
+
         self.login(self.landlord)
+        provider_dashboard = self.client.get(reverse("dashboard"))
+        self.assertContains(provider_dashboard, "Requested stay")
+        decision_action = reverse("reservation_decide", args=[reservation.pk])
+        self.assertContains(provider_dashboard, f'action="{decision_action}"')
         response = self.client.post(
-            reverse("reservation_decide", args=[reservation.pk]),
+            decision_action,
             {"status": Reservation.Status.CONFIRMED},
         )
         self.assertRedirects(response, reverse("dashboard"))
-        self.assertEqual(
-            get_reservation(reservation.pk).status, Reservation.Status.CONFIRMED
+        reservation.refresh_from_db()
+        self.assertEqual(reservation.status, Reservation.Status.CONFIRMED)
+
+        self.login(self.renter)
+        self.assertContains(
+            self.client.get(reverse("dashboard")),
+            f'action="{cancel_action}"',
         )
 
     def test_public_user_cannot_open_private_draft(self):
-        response = self.client.get(
-            reverse("property_detail", args=[self.draft.pk])
-        )
+        response = self.client.get(reverse("property_detail", args=[self.draft.pk]))
         self.assertEqual(response.status_code, 404)
 
     @staticmethod
@@ -277,7 +509,9 @@ class RentalWorkflowTests(SimpleTestCase):
             image_buffer, format="PNG"
         )
         return SimpleUploadedFile(
-            name, image_buffer.getvalue(), content_type="image/png"
+            name,
+            image_buffer.getvalue(),
+            content_type="image/png",
         )
 
     def test_provider_can_create_listing_with_gallery_images(self):
@@ -299,7 +533,7 @@ class RentalWorkflowTests(SimpleTestCase):
                         "bedrooms": "1",
                         "bathrooms": "1",
                         "available_from": timezone.localdate().isoformat(),
-                        "status": Property.Status.DRAFT,
+                        "status": Property.Status.PUBLISHED,
                         "additional_images": [
                             self.image_upload("room.png"),
                             self.image_upload("balcony.png"),
@@ -308,22 +542,45 @@ class RentalWorkflowTests(SimpleTestCase):
                 )
 
                 self.assertRedirects(response, reverse("dashboard"))
-                property_doc = database().properties.find_one(
-                    {"title": "Room with balcony"}
-                )
-                self.assertIsNotNone(property_doc)
-                images = list(
-                    database().property_images.find(
-                        {"property_id": property_doc["_id"]}
-                    )
-                )
+                property_listing = Property.objects.get(title="Room with balcony")
+                images = list(PropertyImage.objects.filter(property=property_listing))
                 self.assertEqual(len(images), 2)
                 self.assertTrue(
-                    all((Path(media_directory) / image["image"]).is_file() for image in images)
+                    all((Path(media_directory) / image.image.name).is_file() for image in images)
                 )
 
                 detail = self.client.get(
-                    reverse("property_detail", args=[str(property_doc["_id"])])
+                    reverse("property_detail", args=[property_listing.pk])
                 )
                 self.assertEqual(detail.status_code, 200)
                 self.assertContains(detail, "room.png")
+
+    def test_provider_cannot_create_a_listing_as_a_renter(self):
+        self.login(self.renter)
+
+        response = self.client.get(reverse("property_create"))
+
+        self.assertRedirects(response, reverse("dashboard"))
+
+    def test_visit_request_can_be_confirmed_and_cancelled(self):
+        visit = create_visit(
+            self.listing.pk,
+            self.renter.pk,
+            timezone.now() + timedelta(days=2),
+        )
+        self.login(self.landlord)
+        response = self.client.post(
+            reverse("visit_request_decide", args=[visit.pk]),
+            {"status": VisitRequest.Status.CONFIRMED},
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        visit.refresh_from_db()
+        self.assertEqual(visit.status, VisitRequest.Status.CONFIRMED)
+
+        self.login(self.renter)
+        response = self.client.post(
+            reverse("visit_request_cancel", args=[visit.pk])
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        visit.refresh_from_db()
+        self.assertEqual(visit.status, VisitRequest.Status.CANCELLED)

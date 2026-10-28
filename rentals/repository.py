@@ -1,505 +1,342 @@
-import re
-from datetime import date, timezone
-from decimal import Decimal
-from functools import lru_cache
-from threading import Lock
+from datetime import date
 
-from bson import Decimal128, ObjectId
-from bson.errors import InvalidId
-from django.conf import settings
-from django.utils import timezone as django_timezone
-from pymongo import ASCENDING, DESCENDING, MongoClient
-from pymongo.errors import DuplicateKeyError
+from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from .models import (
     Property,
     PropertyImage,
-    PropertyStatus,
     Reservation,
-    RequestStatus,
-    StoredImage,
+    SavedProperty,
     User,
     VisitRequest,
 )
 
-_indexed_databases = set()
-_index_lock = Lock()
+
+def _property_queryset(*, with_gallery=False):
+    queryset = Property.objects.select_related("owner")
+    if with_gallery:
+        queryset = queryset.prefetch_related("gallery")
+    return queryset
 
 
-@lru_cache(maxsize=4)
-def _client(uri):
-    return MongoClient(uri, serverSelectionTimeoutMS=5000, tz_aware=True, tzinfo=timezone.utc)
-
-
-def _raw_database():
-    return _client(settings.MONGODB_URI)[settings.MONGODB_DATABASE]
-
-
-def _create_indexes(db):
-    db.users.create_index("username_lower", unique=True)
-    db.users.create_index("email", unique=True)
-    db.properties.create_index([("status", ASCENDING), ("city_lower", ASCENDING)])
-    db.properties.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
-    db.property_images.create_index([("property_id", ASCENDING), ("created_at", ASCENDING)])
-    db.saved_properties.create_index(
-        [("renter_id", ASCENDING), ("property_id", ASCENDING)], unique=True
-    )
-    db.visit_requests.create_index(
-        [("property_id", ASCENDING), ("renter_id", ASCENDING)],
-        unique=True,
-        partialFilterExpression={"status": {"$in": [RequestStatus.REQUESTED, RequestStatus.CONFIRMED]}},
-    )
-    db.visit_requests.create_index([("property_id", ASCENDING), ("scheduled_for", ASCENDING)])
-    db.reservations.create_index([("property_id", ASCENDING), ("start_date", ASCENDING)])
-
-
-def database():
-    db = _raw_database()
-    key = (settings.MONGODB_URI, settings.MONGODB_DATABASE)
-    if key not in _indexed_databases:
-        with _index_lock:
-            if key not in _indexed_databases:
-                _create_indexes(db)
-                _indexed_databases.add(key)
-    return db
-
-
-def ensure_indexes(*, force=False):
-    db = _raw_database()
-    key = (settings.MONGODB_URI, settings.MONGODB_DATABASE)
-    if force or key not in _indexed_databases:
-        with _index_lock:
-            if force or key not in _indexed_databases:
-                _create_indexes(db)
-                _indexed_databases.add(key)
-
-
-def _id(value):
-    if isinstance(value, ObjectId):
-        return value
+def _valid_pk(model, value):
+    if value in (None, ""):
+        return False
     try:
-        return ObjectId(str(value))
-    except (InvalidId, TypeError):
-        return None
-
-
-def _user_from_doc(doc):
-    if not doc or not doc.get("is_active", True):
-        return None
-    return User(
-        id=str(doc["_id"]),
-        username=doc["username"],
-        email=doc["email"],
-        first_name=doc.get("first_name", ""),
-        last_name=doc.get("last_name", ""),
-        role=doc["role"],
-        is_staff=bool(doc.get("is_staff", False)),
-    )
+        model._meta.pk.to_python(value)
+    except (TypeError, ValueError, ValidationError, OverflowError):
+        return False
+    return True
 
 
 def get_user(user_id):
-    object_id = _id(user_id)
-    return _user_from_doc(database().users.find_one({"_id": object_id})) if object_id else None
+    if not _valid_pk(User, user_id):
+        return None
+    return User.objects.filter(pk=user_id, is_active=True).first()
 
 
 def find_user_by_username(username):
-    return database().users.find_one({"username_lower": username.strip().lower()})
+    return User.objects.filter(username__iexact=username.strip()).first()
 
 
 def find_user_by_email(email):
-    return database().users.find_one({"email": email.strip().lower()})
+    return User.objects.filter(email__iexact=email.strip()).first()
 
 
-def create_user(*, username, email, first_name, last_name, role, password_hash):
-    ensure_indexes()
-    username = username.strip()
-    email = email.strip().lower()
-    now = django_timezone.now()
-    doc = {
-        "username": username,
-        "username_lower": username.lower(),
-        "email": email,
-        "first_name": first_name.strip(),
-        "last_name": last_name.strip(),
-        "role": role,
-        "password_hash": password_hash,
-        "is_active": True,
-        "is_staff": False,
-        "created_at": now,
-        "updated_at": now,
-    }
-    try:
-        result = database().users.insert_one(doc)
-    except DuplicateKeyError as error:
-        if database().users.find_one({"email": email}):
-            raise ValueError("An account with this email already exists.") from error
-        raise ValueError("That username is already taken.") from error
-    doc["_id"] = result.inserted_id
-    return _user_from_doc(doc)
-
-
-def _property_from_doc(doc, *, with_gallery=False):
-    if not doc:
-        return None
-    owner = get_user(doc["owner_id"])
-    if owner is None:
-        raise RuntimeError(f"Property {doc['_id']} refers to a missing owner.")
-    prop = Property(
-        id=str(doc["_id"]),
-        owner=owner,
-        title=doc["title"],
-        description=doc["description"],
-        property_type=doc["property_type"],
-        monthly_rent=Decimal(str(doc["monthly_rent"].to_decimal())),
-        security_deposit=Decimal(str(doc["security_deposit"].to_decimal())),
-        address=doc["address"],
-        city=doc["city"],
-        state=doc["state"],
-        postal_code=doc["postal_code"],
-        bedrooms=doc["bedrooms"],
-        bathrooms=doc["bathrooms"],
-        available_from=date.fromisoformat(doc["available_from"]),
-        status=doc["status"],
-        cover_image=StoredImage(doc.get("cover_image", "")),
-        created_at=doc["created_at"],
-        updated_at=doc["updated_at"],
+def create_user(*, username, email, first_name, last_name, role, password):
+    user = User(
+        username=username.strip(),
+        email=email.strip().lower(),
+        first_name=first_name.strip(),
+        last_name=last_name.strip(),
+        role=role,
     )
-    if with_gallery:
-        prop.gallery_images = list_property_images(prop.id)
-    return prop
+    user.set_password(password)
+    try:
+        with transaction.atomic():
+            user.save()
+    except IntegrityError as error:
+        if find_user_by_email(email):
+            raise ValueError("An account with this email already exists.") from error
+        if find_user_by_username(username):
+            raise ValueError("That username is already taken.") from error
+        raise
+    return user
 
 
 def get_property(property_id, *, owner_id=None, status=None, with_gallery=False):
-    object_id = _id(property_id)
-    if object_id is None:
+    if not _valid_pk(Property, property_id):
         return None
-    query = {"_id": object_id}
+    queryset = _property_queryset(with_gallery=with_gallery).filter(pk=property_id)
     if owner_id is not None:
-        owner_object_id = _id(owner_id)
-        if owner_object_id is None:
-            return None
-        query["owner_id"] = owner_object_id
+        queryset = queryset.filter(owner_id=owner_id)
     if status is not None:
-        query["status"] = status
-    return _property_from_doc(database().properties.find_one(query), with_gallery=with_gallery)
-
-
-def _property_document(values, owner_id, *, existing=None):
-    now = django_timezone.now()
-    return {
-        "owner_id": _id(owner_id),
-        "title": values["title"],
-        "description": values["description"],
-        "property_type": values["property_type"],
-        "monthly_rent": Decimal128(str(values["monthly_rent"])),
-        "security_deposit": Decimal128(str(values["security_deposit"])),
-        "address": values["address"],
-        "city": values["city"],
-        "city_lower": values["city"].strip().lower(),
-        "state": values["state"],
-        "postal_code": values["postal_code"],
-        "bedrooms": values["bedrooms"],
-        "bathrooms": values["bathrooms"],
-        "available_from": values["available_from"].isoformat(),
-        "status": values["status"],
-        "cover_image": values.get("cover_image", existing.get("cover_image", "") if existing else ""),
-        "created_at": existing["created_at"] if existing else now,
-        "updated_at": now,
-    }
+        queryset = queryset.filter(status=status)
+    return queryset.first()
 
 
 def create_property(values, owner_id):
-    doc = _property_document(values, owner_id)
-    result = database().properties.insert_one(doc)
-    doc["_id"] = result.inserted_id
-    return _property_from_doc(doc)
+    return Property.objects.create(owner_id=owner_id, **values)
 
 
 def update_property(property_id, values, owner_id):
-    object_id = _id(property_id)
-    existing = database().properties.find_one({"_id": object_id, "owner_id": _id(owner_id)})
-    if existing is None:
+    listing = get_property(property_id, owner_id=owner_id)
+    if listing is None:
         return None
-    doc = _property_document(values, owner_id, existing=existing)
-    database().properties.update_one({"_id": object_id}, {"$set": doc})
-    return _property_from_doc({**doc, "_id": object_id})
+    for field, value in values.items():
+        setattr(listing, field, value)
+    listing.save()
+    return listing
 
 
 def update_property_status(property_id, owner_id, status):
-    result = database().properties.update_one(
-        {"_id": _id(property_id), "owner_id": _id(owner_id)},
-        {"$set": {"status": status, "updated_at": django_timezone.now()}},
-    )
-    return result.matched_count == 1
+    return Property.objects.filter(pk=property_id, owner_id=owner_id).update(
+        status=status,
+        updated_at=timezone.now(),
+    ) == 1
 
 
 def list_properties(*, owner_id=None, status=None, filters=None, sort="newest"):
-    query = {}
+    queryset = _property_queryset()
     if owner_id is not None:
-        query["owner_id"] = _id(owner_id)
+        queryset = queryset.filter(owner_id=owner_id)
     if status is not None:
-        query["status"] = status
+        queryset = queryset.filter(status=status)
     filters = filters or {}
-    city = filters.get("city")
-    if city:
-        query["city_lower"] = {"$regex": re.escape(city.strip().lower())}
+    keyword = filters.get("q")
+    if keyword:
+        queryset = queryset.filter(
+            Q(title__icontains=keyword)
+            | Q(description__icontains=keyword)
+            | Q(address__icontains=keyword)
+            | Q(city__icontains=keyword)
+        )
+    if filters.get("city"):
+        queryset = queryset.filter(city__icontains=filters["city"].strip())
     if filters.get("property_type"):
-        query["property_type"] = filters["property_type"]
-    rent = {}
+        queryset = queryset.filter(property_type=filters["property_type"])
     if filters.get("min_rent") is not None:
-        rent["$gte"] = Decimal128(str(filters["min_rent"]))
+        queryset = queryset.filter(monthly_rent__gte=filters["min_rent"])
     if filters.get("max_rent") is not None:
-        rent["$lte"] = Decimal128(str(filters["max_rent"]))
-    if rent:
-        query["monthly_rent"] = rent
+        queryset = queryset.filter(monthly_rent__lte=filters["max_rent"])
     if filters.get("min_bedrooms"):
-        query["bedrooms"] = {"$gte": filters["min_bedrooms"]}
+        queryset = queryset.filter(bedrooms__gte=filters["min_bedrooms"])
     if filters.get("move_in_date"):
-        query["available_from"] = {"$lte": filters["move_in_date"].isoformat()}
-    sort_field, direction = {
-        "rent_low": ("monthly_rent", ASCENDING),
-        "rent_high": ("monthly_rent", DESCENDING),
-        "available": ("available_from", ASCENDING),
-    }.get(sort, ("created_at", DESCENDING))
-    cursor = database().properties.find(query).sort(
-        [(sort_field, direction), ("created_at", DESCENDING)]
-    )
-    return [_property_from_doc(doc) for doc in cursor]
+        queryset = queryset.filter(available_from__lte=filters["move_in_date"])
+    ordering = {
+        "rent_low": ("monthly_rent", "-created_at"),
+        "rent_high": ("-monthly_rent", "-created_at"),
+        "available": ("available_from", "-created_at"),
+    }.get(sort, ("-created_at",))
+    return list(queryset.order_by(*ordering))
 
 
 def count_visits_for_property(property_id):
-    return database().visit_requests.count_documents({"property_id": _id(property_id)})
-
-
-def _property_image_from_doc(doc):
-    return PropertyImage(
-        id=str(doc["_id"]),
-        property_id=str(doc["property_id"]),
-        image=StoredImage(doc["image"]),
-        created_at=doc["created_at"],
-    )
+    return VisitRequest.objects.filter(property_id=property_id).count()
 
 
 def create_property_image(property_id, image_name):
-    now = django_timezone.now()
-    doc = {"property_id": _id(property_id), "image": image_name, "created_at": now}
-    result = database().property_images.insert_one(doc)
-    doc["_id"] = result.inserted_id
-    return _property_image_from_doc(doc)
+    return PropertyImage.objects.create(property_id=property_id, image=image_name)
 
 
 def list_property_images(property_id):
-    return [
-        _property_image_from_doc(doc)
-        for doc in database().property_images.find({"property_id": _id(property_id)}).sort("created_at", ASCENDING)
-    ]
+    return list(PropertyImage.objects.filter(property_id=property_id))
 
 
 def delete_property_image(property_id, image_id):
-    return database().property_images.find_one_and_delete(
-        {"_id": _id(image_id), "property_id": _id(property_id)}
-    )
+    image = PropertyImage.objects.filter(pk=image_id, property_id=property_id).first()
+    if image is not None:
+        image.delete()
+    return image
 
 
 def get_image_count(property_id):
-    return database().property_images.count_documents({"property_id": _id(property_id)})
+    return PropertyImage.objects.filter(property_id=property_id).count()
 
 
 def saved_property_ids(renter_id):
-    return {
-        str(doc["property_id"])
-        for doc in database().saved_properties.find({"renter_id": _id(renter_id)}, {"property_id": 1})
-    }
+    return set(
+        SavedProperty.objects.filter(renter_id=renter_id).values_list(
+            "property_id", flat=True
+        )
+    )
 
 
 def list_saved_properties(renter_id):
-    saved_ids = [doc["property_id"] for doc in database().saved_properties.find({"renter_id": _id(renter_id)})]
-    if not saved_ids:
-        return []
-    return [
-        _property_from_doc(doc)
-        for doc in database().properties.find(
-            {"_id": {"$in": saved_ids}, "status": PropertyStatus.PUBLISHED}
-        ).sort("created_at", DESCENDING)
-    ]
+    return list(
+        _property_queryset()
+        .filter(saved_by__renter_id=renter_id, status=Property.Status.PUBLISHED)
+        .order_by("-saved_by__created_at")
+    )
 
 
 def set_saved_property(renter_id, property_id, save):
-    ensure_indexes()
-    key = {"renter_id": _id(renter_id), "property_id": _id(property_id)}
     if save:
-        database().saved_properties.update_one(
-            key,
-            {"$setOnInsert": {**key, "created_at": django_timezone.now()}},
-            upsert=True,
+        SavedProperty.objects.get_or_create(
+            renter_id=renter_id,
+            property_id=property_id,
         )
     else:
-        database().saved_properties.delete_one(key)
+        SavedProperty.objects.filter(
+            renter_id=renter_id,
+            property_id=property_id,
+        ).delete()
 
 
-def _visit_from_doc(doc):
-    return VisitRequest(
-        id=str(doc["_id"]),
-        property=get_property(doc["property_id"]),
-        renter=get_user(doc["renter_id"]),
-        scheduled_for=doc["scheduled_for"],
-        message=doc.get("message", ""),
-        status=doc["status"],
-        created_at=doc["created_at"],
-        updated_at=doc["updated_at"],
+def _visit_queryset():
+    return VisitRequest.objects.select_related(
+        "property__owner",
+        "renter",
     )
 
 
 def create_visit(property_id, renter_id, scheduled_for, message=""):
-    prop = get_property(property_id)
+    listing = get_property(property_id)
     renter = get_user(renter_id)
-    if prop is None or renter is None:
+    if listing is None or renter is None:
         raise ValueError("The selected listing or account no longer exists.")
-    if prop.owner_id == renter.id:
+    if listing.owner_id == renter.pk:
         raise ValueError("You cannot request a visit to your own property.")
-    if scheduled_for <= django_timezone.now():
+    if scheduled_for <= timezone.now():
         raise ValueError("Choose a visit time in the future.")
-    ensure_indexes()
-    now = django_timezone.now()
-    doc = {
-        "property_id": _id(property_id),
-        "renter_id": _id(renter_id),
-        "scheduled_for": scheduled_for,
-        "message": message,
-        "status": RequestStatus.REQUESTED,
-        "created_at": now,
-        "updated_at": now,
-    }
     try:
-        result = database().visit_requests.insert_one(doc)
-    except DuplicateKeyError as error:
-        raise ValueError("You already have an open visit request for this property. Cancel or finish it before requesting another.") from error
-    doc["_id"] = result.inserted_id
-    return _visit_from_doc(doc)
-
-
-def _owned_property_ids(owner_id):
-    return [doc["_id"] for doc in database().properties.find({"owner_id": _id(owner_id)}, {"_id": 1})]
+        with transaction.atomic():
+            return VisitRequest.objects.create(
+                property=listing,
+                renter=renter,
+                scheduled_for=scheduled_for,
+                message=message,
+            )
+    except IntegrityError as error:
+        raise ValueError(
+            "You already have an open visit request for this property. Cancel or finish it before requesting another."
+        ) from error
 
 
 def list_visits(*, renter_id=None, owner_id=None):
-    query = {}
+    queryset = _visit_queryset()
     if renter_id is not None:
-        query["renter_id"] = _id(renter_id)
+        queryset = queryset.filter(renter_id=renter_id)
     elif owner_id is not None:
-        query["property_id"] = {"$in": _owned_property_ids(owner_id)}
-    return [_visit_from_doc(doc) for doc in database().visit_requests.find(query).sort("scheduled_for", ASCENDING)]
+        queryset = queryset.filter(property__owner_id=owner_id)
+    return list(queryset.order_by("scheduled_for"))
 
 
 def get_visit(visit_id, *, renter_id=None, owner_id=None, status=None):
-    query = {"_id": _id(visit_id)}
+    if not _valid_pk(VisitRequest, visit_id):
+        return None
+    queryset = _visit_queryset().filter(pk=visit_id)
     if renter_id is not None:
-        query["renter_id"] = _id(renter_id)
+        queryset = queryset.filter(renter_id=renter_id)
     if owner_id is not None:
-        query["property_id"] = {"$in": _owned_property_ids(owner_id)}
-    if status is not None:
-        query["status"] = status
-    return _visit_from_doc(database().visit_requests.find_one(query)) if query["_id"] else None
+        queryset = queryset.filter(property__owner_id=owner_id)
+    if isinstance(status, (list, tuple, set)):
+        queryset = queryset.filter(status__in=status)
+    elif status is not None:
+        queryset = queryset.filter(status=status)
+    return queryset.first()
 
 
 def update_visit_status(visit_id, status):
-    return database().visit_requests.update_one(
-        {"_id": _id(visit_id)}, {"$set": {"status": status, "updated_at": django_timezone.now()}}
-    ).matched_count == 1
+    return VisitRequest.objects.filter(pk=visit_id).update(
+        status=status,
+        updated_at=timezone.now(),
+    ) == 1
 
 
-def _reservation_from_doc(doc):
-    return Reservation(
-        id=str(doc["_id"]),
-        property=get_property(doc["property_id"]),
-        renter=get_user(doc["renter_id"]),
-        start_date=date.fromisoformat(doc["start_date"]),
-        end_date=date.fromisoformat(doc["end_date"]),
-        message=doc.get("message", ""),
-        status=doc["status"],
-        created_at=doc["created_at"],
-        updated_at=doc["updated_at"],
-    )
-
-
-def create_reservation(property_id, renter_id, start_date, end_date, message=""):
-    prop = get_property(property_id)
-    if prop is None or get_user(renter_id) is None:
+def create_reservation(
+    property_id,
+    renter_id,
+    start_date: date,
+    end_date: date,
+    message="",
+):
+    listing = get_property(property_id)
+    renter = get_user(renter_id)
+    if listing is None or renter is None:
         raise ValueError("The selected listing or account no longer exists.")
-    if prop.owner_id == str(renter_id):
+    if listing.owner_id == renter.pk:
         raise ValueError("You cannot book your own property.")
-    today = django_timezone.localdate()
-    if start_date < today:
+    if start_date < timezone.localdate():
         raise ValueError("Check-in cannot be in the past.")
     if end_date <= start_date:
         raise ValueError("Check-out must be after check-in.")
-    query = {
-        "property_id": _id(property_id),
-        "status": {"$in": [RequestStatus.REQUESTED, RequestStatus.CONFIRMED]},
-        "start_date": {"$lt": end_date.isoformat()},
-        "end_date": {"$gt": start_date.isoformat()},
-    }
-    if database().reservations.find_one(query):
-        raise ValueError("These dates overlap another active booking request for this property.")
-    now = django_timezone.now()
-    doc = {
-        "property_id": _id(property_id),
-        "renter_id": _id(renter_id),
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "message": message,
-        "status": RequestStatus.REQUESTED,
-        "created_at": now,
-        "updated_at": now,
-    }
-    result = database().reservations.insert_one(doc)
-    doc["_id"] = result.inserted_id
-    return _reservation_from_doc(doc)
+    with transaction.atomic():
+        overlapping = Reservation.objects.filter(
+            property=listing,
+            status__in=(Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED),
+            start_date__lt=end_date,
+            end_date__gt=start_date,
+        )
+        if overlapping.exists():
+            raise ValueError(
+                "These dates overlap another active booking request for this property."
+            )
+        return Reservation.objects.create(
+            property=listing,
+            renter=renter,
+            start_date=start_date,
+            end_date=end_date,
+            message=message,
+        )
 
 
 def list_reservations(*, renter_id=None, owner_id=None):
-    query = {}
+    queryset = Reservation.objects.select_related(
+        "property__owner",
+        "renter",
+    )
     if renter_id is not None:
-        query["renter_id"] = _id(renter_id)
+        queryset = queryset.filter(renter_id=renter_id)
     elif owner_id is not None:
-        query["property_id"] = {"$in": _owned_property_ids(owner_id)}
-    return [
-        _reservation_from_doc(doc)
-        for doc in database().reservations.find(query).sort(
-            [("start_date", ASCENDING), ("created_at", ASCENDING)]
-        )
-    ]
+        queryset = queryset.filter(property__owner_id=owner_id)
+    return list(queryset.order_by("start_date", "created_at"))
 
 
 def get_reservation(reservation_id, *, renter_id=None, owner_id=None, status=None):
-    query = {"_id": _id(reservation_id)}
+    if not _valid_pk(Reservation, reservation_id):
+        return None
+    queryset = Reservation.objects.select_related(
+        "property__owner",
+        "renter",
+    ).filter(pk=reservation_id)
     if renter_id is not None:
-        query["renter_id"] = _id(renter_id)
+        queryset = queryset.filter(renter_id=renter_id)
     if owner_id is not None:
-        query["property_id"] = {"$in": _owned_property_ids(owner_id)}
-    if status is not None:
-        query["status"] = status
-    doc = database().reservations.find_one(query) if query["_id"] else None
-    return _reservation_from_doc(doc) if doc else None
+        queryset = queryset.filter(property__owner_id=owner_id)
+    if isinstance(status, (list, tuple, set)):
+        queryset = queryset.filter(status__in=status)
+    elif status is not None:
+        queryset = queryset.filter(status=status)
+    return queryset.first()
 
 
 def update_reservation_status(reservation_id, status):
-    object_id = _id(reservation_id)
-    if status == RequestStatus.CONFIRMED:
-        current = database().reservations.find_one({"_id": object_id})
-        if current is None:
-            return False
-        conflict = database().reservations.find_one(
-            {
-                "_id": {"$ne": object_id},
-                "property_id": current["property_id"],
-                "status": {"$in": [RequestStatus.REQUESTED, RequestStatus.CONFIRMED]},
-                "start_date": {"$lt": current["end_date"]},
-                "end_date": {"$gt": current["start_date"]},
-            }
+    with transaction.atomic():
+        reservation = (
+            Reservation.objects.select_for_update()
+            .filter(pk=reservation_id)
+            .first()
         )
-        if conflict:
-            raise ValueError("These dates overlap another active booking request for this property.")
-    return database().reservations.update_one(
-        {"_id": object_id}, {"$set": {"status": status, "updated_at": django_timezone.now()}}
-    ).matched_count == 1
+        if reservation is None:
+            return False
+        if status == Reservation.Status.CONFIRMED:
+            overlapping = Reservation.objects.filter(
+                property=reservation.property,
+                status__in=(
+                    Reservation.Status.REQUESTED,
+                    Reservation.Status.CONFIRMED,
+                ),
+                start_date__lt=reservation.end_date,
+                end_date__gt=reservation.start_date,
+            ).exclude(pk=reservation.pk)
+            if overlapping.exists():
+                raise ValueError(
+                    "These dates overlap another active booking request for this property."
+                )
+        reservation.status = status
+        reservation.save(update_fields=("status", "updated_at"))
+        return True

@@ -1,5 +1,5 @@
 from django import forms
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth import authenticate
 from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
 
@@ -30,12 +30,13 @@ class SignUpForm(forms.Form):
     last_name = forms.CharField(max_length=150)
     role = forms.ChoiceField(
         label="How will you use RentHouse?",
-        choices=User.Role.choices(),
+        choices=User.Role.choices,
         widget=forms.RadioSelect(attrs={"class": "accent-brand-600"}),
     )
     password1 = forms.CharField(
         label="Password",
         strip=False,
+        min_length=8,
         widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
     )
     password2 = forms.CharField(
@@ -45,7 +46,7 @@ class SignUpForm(forms.Form):
     )
 
     def clean_username(self):
-        username = self.cleaned_data["username"].strip()
+        username = self.cleaned_data["username"].strip().lower()
         if find_user_by_username(username):
             raise forms.ValidationError("That username is already taken.")
         return username
@@ -65,6 +66,41 @@ class SignUpForm(forms.Form):
         return cleaned_data
 
 
+class ContactForm(forms.Form):
+    name = forms.CharField(max_length=100)
+    email = forms.EmailField()
+    subject = forms.CharField(required=False, max_length=150)
+    message = forms.CharField(
+        min_length=10,
+        max_length=5000,
+        widget=forms.Textarea(attrs={"rows": 5}),
+    )
+    website = forms.CharField(
+        required=False,
+        widget=forms.HiddenInput(
+            attrs={"tabindex": "-1", "autocomplete": "off"}
+        ),
+    )
+
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        if "\r" in name or "\n" in name:
+            raise forms.ValidationError("Enter your name on a single line.")
+        return name
+
+    def clean_subject(self):
+        subject = self.cleaned_data["subject"]
+        if "\r" in subject or "\n" in subject:
+            raise forms.ValidationError("Enter a subject on a single line.")
+        return subject
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get("website"):
+            raise forms.ValidationError("Unable to submit this message.")
+        return cleaned_data
+
+
 class RoleBasedAuthenticationForm(forms.Form):
     username = forms.CharField(max_length=150)
     password = forms.CharField(
@@ -73,9 +109,12 @@ class RoleBasedAuthenticationForm(forms.Form):
     )
     role = forms.ChoiceField(
         label="Log in as",
-        choices=User.Role.choices(),
+        choices=User.Role.choices,
         widget=forms.RadioSelect(attrs={"class": "accent-brand-600"}),
     )
+
+    def clean_username(self):
+        return self.cleaned_data["username"].strip().lower()
 
     def clean(self):
         cleaned_data = super().clean()
@@ -83,13 +122,8 @@ class RoleBasedAuthenticationForm(forms.Form):
         password = cleaned_data.get("password")
         role = cleaned_data.get("role")
         if username and password and role:
-            account = find_user_by_username(username)
-            if (
-                account is None
-                or not account.get("is_active", True)
-                or not check_password(password, account["password_hash"])
-                or account["role"] != role
-            ):
+            account = authenticate(username=username, password=password)
+            if account is None or account.role != role:
                 raise forms.ValidationError(
                     "Please enter valid credentials for the selected account type."
                 )
@@ -104,10 +138,11 @@ class PropertySearchForm(forms.Form):
         RENT_HIGH = "rent_high"
         AVAILABLE = "available"
 
+    q = forms.CharField(required=False, max_length=150, label="Keyword")
     city = forms.CharField(required=False, max_length=100)
     property_type = forms.ChoiceField(
         required=False,
-        choices=[("", "Any property type"), *Property.PropertyType.choices()],
+        choices=[("", "Any property type"), *Property.PropertyType.choices],
     )
     min_rent = forms.DecimalField(
         required=False, min_value=0, max_digits=10, decimal_places=2
@@ -162,8 +197,11 @@ class PropertySearchForm(forms.Form):
 
 class PropertyForm(forms.Form):
     title = forms.CharField(max_length=120)
-    description = forms.CharField(max_length=4000, widget=forms.Textarea(attrs={"rows": 5}))
-    property_type = forms.ChoiceField(choices=Property.PropertyType.choices())
+    description = forms.CharField(
+        max_length=4000,
+        widget=forms.Textarea(attrs={"rows": 5, "data-char-counter": "desc-count"}),
+    )
+    property_type = forms.ChoiceField(choices=Property.PropertyType.choices)
     monthly_rent = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0.01)
     security_deposit = forms.DecimalField(max_digits=10, decimal_places=2, min_value=0)
     address = forms.CharField(max_length=250)
@@ -175,7 +213,7 @@ class PropertyForm(forms.Form):
     available_from = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
     cover_image = forms.ImageField(required=False)
     remove_cover_image = forms.BooleanField(required=False, label="Remove current cover photo")
-    status = forms.ChoiceField(choices=Property.Status.choices())
+    status = forms.ChoiceField(choices=Property.Status.choices)
     additional_images = MultipleImageField(
         required=False,
         label="Additional property photos",

@@ -3,24 +3,41 @@
 {% block content %}
   <section class="my-8 rounded-2xl bg-brand-50 px-5 py-10 sm:my-12 sm:px-12 sm:py-16">
     <p class="eyebrow">ABOUT RENTHOUSE</p>
-    <h1 class="max-w-3xl text-3xl font-bold leading-tight sm:text-5xl">A simpler way to find a place and make it yours.</h1>
-    <p class="mt-5 max-w-2xl text-lg text-muted">RentHouse brings home seekers and service providers together. Explore verified listing details, request a viewing and send a booking request in one place.</p>
+    <h1 class="max-w-3xl text-3xl font-bold leading-tight sm:text-5xl">
+      A simpler way to find a place and make it yours.
+    </h1>
+    <p class="mt-5 max-w-2xl text-lg text-muted">
+      RentHouse brings home seekers and service providers together. Explore verified listing details,
+      request a viewing and send a booking request in one place.
+    </p>
     <div class="mt-7 flex flex-wrap gap-3">
-      <a class="btn-primary" href="{% url 'home' %}">Browse rooms</a>
-      {% if not user.is_authenticated %}<a class="btn-secondary" href="{% url 'signup' %}">Get started</a>{% endif %}
+      <a class="btn-primary" href="{% url 'listings' %}">Browse rooms</a>
+      {% if not user.is_authenticated %}
+        <a class="btn-secondary" href="{% url 'signup' %}">Get started</a>
+      {% endif %}
     </div>
   </section>
+
   <section class="mb-12 grid gap-5 md:grid-cols-2">
-    <article class="rounded-xl border border-stone-200 bg-white p-6">
+    <article class="card p-6">
       <p class="eyebrow">FOR HOME SEEKERS</p>
       <h2 class="mt-2 text-2xl font-bold">Find the right fit</h2>
-      <p class="mt-3 text-muted">Search houses, apartments, rooms, PGs and hostels by city, rent and availability. Save places, request a visit and submit the dates you want to book.</p>
+      <p class="mt-3 text-muted">
+        Search houses, apartments, rooms, PGs and hostels by city, rent and availability.
+        Save places, request a visit and submit the dates you want to book.
+      </p>
     </article>
-    <article class="rounded-xl border border-stone-200 bg-white p-6">
+    <article class="card p-6">
       <p class="eyebrow">FOR SERVICE PROVIDERS</p>
       <h2 class="mt-2 text-2xl font-bold">Manage your rentals</h2>
-      <p class="mt-3 text-muted">Create and publish listings, add photos, manage availability, and respond to viewing and booking requests from your dashboard.</p>
+      <p class="mt-3 text-muted">
+        Create and publish listings, add photos, manage availability, and respond to viewing
+        and booking requests from your dashboard.
+      </p>
     </article>
   </section>
-  <p class="mb-12 text-sm text-muted">Booking requests are confirmed by the service provider. Payments are not processed through RentHouse.</p>
+
+  <p class="mb-12 text-sm text-muted">
+    Booking requests are confirmed by the service provider. Payments are not processed through RentHouse.
+  </p>
 {% endblock %}

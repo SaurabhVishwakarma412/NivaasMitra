@@ -2,117 +2,112 @@
 {% block title %}Your dashboard · RentHouse{% endblock %}
 {% block content %}
   <section class="my-10 flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-    <div><p class="eyebrow">{{ user.get_role_display }} ACCOUNT</p><h1 class="text-3xl font-bold">Welcome, {{ user.first_name|default:user.username }}</h1>
-      <p class="mt-1 text-muted">{% if user.role == "landlord" %}Manage your room listings and respond to viewing and booking requests.{% else %}Track saved homes, visits and booking requests with service providers.{% endif %}</p>
+    <div>
+      <p class="eyebrow">{{ user.get_role_display|upper }} ACCOUNT</p>
+      <h1 class="text-3xl font-bold">Welcome, {{ user.first_name }}</h1>
+      <p class="mt-1 text-muted">
+        {% if role == "provider" %}
+          Manage your listings and respond to viewing and booking requests.
+        {% else %}
+          Track saved homes, visits and booking requests with providers.
+        {% endif %}
+      </p>
     </div>
-    {% if user.role == "landlord" %}<a class="btn-primary" href="{% url 'property_create' %}">+ Add a room</a>{% endif %}
-  </section>
-  <section class="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Account summary">
-    {% if user.role == "landlord" %}
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Your listings</p><p class="mt-1 text-3xl font-bold">{{ summary.properties }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Published</p><p class="mt-1 text-3xl font-bold">{{ summary.published }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Requests to review</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_visits }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Total visits</p><p class="mt-1 text-3xl font-bold">{{ summary.total_visits }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Booking requests</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_reservations }}</p></article>
-    {% else %}
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Saved places</p><p class="mt-1 text-3xl font-bold">{{ summary.saved }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Requests awaiting reply</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_visits }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Confirmed visits</p><p class="mt-1 text-3xl font-bold">{{ summary.confirmed_visits }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Booking requests</p><p class="mt-1 text-3xl font-bold">{{ summary.pending_reservations }}</p></article>
-      <article class="rounded-xl bg-slate-950 p-5 text-white"><p class="text-sm text-slate-300">Confirmed bookings</p><p class="mt-1 text-3xl font-bold">{{ summary.confirmed_reservations }}</p></article>
+    {% if role == "provider" %}
+      <a class="btn-primary" href="{% url 'property_create' %}">+ Add a room</a>
     {% endif %}
   </section>
-  {% if user.role == "landlord" %}
-    <section class="mb-12">
-      <div class="mb-4"><h2 class="text-2xl font-bold">Your listings</h2></div>
+
+  <section class="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="Account summary">
+    {% if role == "provider" %}
+      <a href="#listings" class="summary-card"><p class="summary-label">Your listings</p><p class="summary-value">{{ summary.properties }}</p></a>
+      <a href="#listings" class="summary-card"><p class="summary-label">Published</p><p class="summary-value">{{ summary.published }}</p></a>
+      <a href="#visits"   class="summary-card"><p class="summary-label">Requests to review</p><p class="summary-value">{{ summary.pending_visits }}</p></a>
+      <a href="#visits"   class="summary-card"><p class="summary-label">Total visits</p><p class="summary-value">{{ summary.total_visits }}</p></a>
+      <a href="#bookings" class="summary-card"><p class="summary-label">Booking requests</p><p class="summary-value">{{ summary.pending_reservations }}</p></a>
+    {% else %}
+      <a href="#saved"    class="summary-card"><p class="summary-label">Saved places</p><p class="summary-value">{{ summary.saved }}</p></a>
+      <a href="#visits"   class="summary-card"><p class="summary-label">Awaiting reply</p><p class="summary-value">{{ summary.pending_visits }}</p></a>
+      <a href="#visits"   class="summary-card"><p class="summary-label">Confirmed visits</p><p class="summary-value">{{ summary.confirmed_visits }}</p></a>
+      <a href="#bookings" class="summary-card"><p class="summary-label">Booking requests</p><p class="summary-value">{{ summary.pending_reservations }}</p></a>
+      <a href="#bookings" class="summary-card"><p class="summary-label">Confirmed bookings</p><p class="summary-value">{{ summary.confirmed_reservations }}</p></a>
+    {% endif %}
+  </section>
+
+  {% if role == "provider" %}
+    <section id="listings" class="mb-12 scroll-mt-24">
+      <h2 class="mb-4 section-title">Your listings</h2>
       {% if properties %}
-        <div class="overflow-x-auto rounded-xl border border-stone-200 bg-white"><table class="w-full text-left"><thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="whitespace-nowrap px-4 py-3">Property</th><th class="px-4 py-3">Location</th><th class="whitespace-nowrap px-4 py-3">Rent / month</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">Visits</th><th class="px-4 py-3">Actions</th></tr></thead>
-          <tbody>{% for property in properties %}<tr class="border-t border-stone-100"><td class="whitespace-nowrap px-4 py-3"><a href="{% url 'property_detail' property.pk %}">{{ property.title }}</a></td><td class="px-4 py-3">{{ property.city }}</td><td class="whitespace-nowrap px-4 py-3">₹{{ property.monthly_rent|floatformat:0 }}</td><td class="px-4 py-3"><span class="rounded-full px-2.5 py-1 text-xs font-bold {% if property.status == 'published' %}bg-emerald-100 text-emerald-800{% elif property.status == 'paused' %}bg-amber-100 text-amber-800{% elif property.status == 'archived' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-700{% endif %}">{{ property.get_status_display }}</span></td><td class="px-4 py-3">{{ property.visit_count }}</td><td class="px-4 py-3"><div class="flex gap-3"><a href="{% url 'property_edit' property.pk %}">Edit</a>
-            <form method="post" action="{% url 'property_status_update' property.pk %}">{% csrf_token %}
-              {% if property.status == "published" %}<input type="hidden" name="status" value="paused"><button class="text-sm font-semibold text-amber-800 hover:underline" type="submit">Pause</button>
-              {% elif property.status == "paused" or property.status == "draft" %}<input type="hidden" name="status" value="published"><button class="text-sm font-semibold text-brand-600 hover:underline" type="submit">Publish</button>
-              {% elif property.status == "archived" %}<input type="hidden" name="status" value="draft"><button class="text-sm font-semibold text-brand-600 hover:underline" type="submit">Restore</button>{% endif %}
-            </form></div></td></tr>{% endfor %}</tbody>
-        </table></div>
-      {% else %}<div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center"><h3 class="font-bold">No listings yet</h3><p class="mt-1 text-muted">Create a listing to make your property discoverable.</p></div>{% endif %}
+        <div class="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+          <table class="w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th class="px-4 py-3">Property</th>
+                <th class="px-4 py-3">Location</th>
+                <th class="px-4 py-3">Rent / mo</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for property in properties %}
+                <tr class="border-t border-stone-100">
+                  <td class="px-4 py-3 font-semibold">
+                    <a class="hover:text-brand-600" href="{% url 'property_detail' property.pk %}">
+                      {{ property.title }}
+                    </a>
+                  </td>
+                  <td class="px-4 py-3 text-muted">{{ property.city }}</td>
+                  <td class="px-4 py-3">₹{{ property.monthly_rent|floatformat:0 }}</td>
+                  <td class="px-4 py-3">
+                    <span class="badge badge-{{ property.status }}">{{ property.get_status_display }}</span>
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <div class="inline-flex gap-3">
+                      <a class="link" href="{% url 'property_edit' property.pk %}">Edit</a>
+                      <form method="post" action="{% url 'property_status_update' property.pk %}">
+                        {% csrf_token %}
+                        {% if property.status == "published" %}
+                          <input type="hidden" name="status" value="paused">
+                          <button class="font-semibold text-amber-700 hover:underline" type="submit">Pause</button>
+                        {% elif property.status == "archived" %}
+                          <input type="hidden" name="status" value="draft">
+                          <button class="link" type="submit">Restore draft</button>
+                        {% else %}
+                          <input type="hidden" name="status" value="published">
+                          <button class="link" type="submit">{% if property.status == "paused" %}Resume{% else %}Publish{% endif %}</button>
+                        {% endif %}
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        {% include "rentals/_empty.html" with title="No listings yet" body="Create your first listing to start receiving requests." action_url=property_create_url action_label="Add a room" %}
+      {% endif %}
     </section>
-  {% endif %}
-  {% if user.role == "renter" %}
-    <section class="mb-12">
-      <div class="mb-4 flex items-center justify-between"><h2 class="text-2xl font-bold">Saved places</h2><a class="text-sm font-semibold" href="{% url 'home' %}">Explore all places →</a></div>
+  {% else %}
+    <section id="saved" class="mb-12 scroll-mt-24">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="section-title">Saved places</h2>
+        <a class="link text-sm" href="{% url 'listings' %}">Explore all →</a>
+      </div>
       {% if saved_properties %}
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {% for property in saved_properties %}
-            <article class="overflow-hidden rounded-xl border border-stone-200 bg-white">
-              <a class="block h-40 bg-brand-50" href="{% url 'property_detail' property.pk %}">
-                {% if property.cover_image %}<img class="h-full w-full object-cover" src="{{ property.cover_image.url }}" alt="Cover photo for {{ property.title }}">{% else %}<div class="grid h-full place-items-center bg-gradient-to-br from-brand-50 to-brand-100 font-semibold text-brand-600">Your next place</div>{% endif %}
-              </a>
-              <div class="p-4">
-                <p class="text-sm text-muted">{{ property.city }}, {{ property.state }} · Available {{ property.available_from|date:"j M Y" }}</p>
-                <h3 class="mt-1 font-bold"><a class="text-ink hover:text-brand-600" href="{% url 'property_detail' property.pk %}">{{ property.title }}</a></h3>
-                <div class="mt-3 flex items-center justify-between"><p class="font-bold text-brand-600">₹{{ property.monthly_rent|floatformat:0 }}<span class="text-xs font-normal text-muted"> / month</span></p>
-                  <form method="post" action="{% url 'saved_property_toggle' property.pk %}">{% csrf_token %}<input type="hidden" name="action" value="remove"><input type="hidden" name="next" value="{% url 'dashboard' %}"><button class="text-sm font-semibold text-slate-700 hover:text-rose-700" type="submit">Remove</button></form>
-                </div>
-              </div>
-            </article>
+            {% include "rentals/_property_card.html" with property=property saved=True %}
           {% endfor %}
         </div>
       {% else %}
-        <div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center"><h3 class="font-bold">No saved places yet</h3><p class="mt-1 text-muted">Save listings while browsing to compare them here.</p><a class="btn-primary mt-4" href="{% url 'home' %}">Browse homes</a></div>
+        {% include "rentals/_empty.html" with title="No saved places yet" body="Save listings while browsing to compare them here." action_url=listings_url action_label="Browse homes" %}
       {% endif %}
     </section>
   {% endif %}
-  <section class="mb-12">
-    <div class="mb-4"><h2 class="text-2xl font-bold">{% if user.role == "landlord" %}Booking requests{% else %}Your bookings{% endif %}</h2></div>
-    {% if reservations %}
-      <div class="grid gap-3">
-        {% for reservation in reservations %}
-          <article class="flex flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-5 sm:flex-row sm:items-center">
-            <div>
-              <p class="eyebrow">{{ reservation.property.get_property_type_display }} · {{ reservation.property.city }}</p>
-              <h3 class="font-bold"><a class="text-ink hover:text-brand-600" href="{% url 'property_detail' reservation.property.pk %}">{{ reservation.property.title }}</a></h3>
-              <p class="mt-1">Requested stay: {{ reservation.start_date|date:"j M Y" }} – {{ reservation.end_date|date:"j M Y" }} · <span class="rounded-full px-2.5 py-1 text-xs font-bold {% if reservation.status == 'confirmed' %}bg-emerald-100 text-emerald-800{% elif reservation.status == 'requested' %}bg-amber-100 text-amber-800{% elif reservation.status == 'declined' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-700{% endif %}">{{ reservation.get_status_display }}</span></p>
-              {% if user.role == "landlord" %}<p>Requested by {{ reservation.renter.get_full_name|default:reservation.renter.username }} ({{ reservation.renter.email }})</p>{% else %}<p>Service provider: {{ reservation.property.owner.get_full_name|default:reservation.property.owner.username }}</p>{% endif %}
-              {% if reservation.message %}<p class="mt-2 italic text-muted">“{{ reservation.message }}”</p>{% endif %}
-              <p class="mt-2 text-sm text-muted">Rent: ₹{{ reservation.property.monthly_rent|floatformat:0 }} per month · Confirmation is subject to provider approval.</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              {% if user.role == "landlord" and reservation.status == "requested" %}
-                <form method="post" action="{% url 'reservation_decide' reservation.pk %}">{% csrf_token %}<input type="hidden" name="status" value="confirmed"><button class="btn-secondary border-0 bg-brand-600 text-white hover:bg-brand-700" type="submit">Confirm</button></form>
-                <form method="post" action="{% url 'reservation_decide' reservation.pk %}">{% csrf_token %}<input type="hidden" name="status" value="declined"><button class="btn-secondary" type="submit">Decline</button></form>
-              {% elif user.role == "renter" and reservation.status == "requested" or user.role == "renter" and reservation.status == "confirmed" %}
-                <form method="post" action="{% url 'reservation_cancel' reservation.pk %}">{% csrf_token %}<button class="btn-secondary" type="submit">Cancel booking</button></form>
-              {% endif %}
-            </div>
-          </article>
-        {% endfor %}
-      </div>
-    {% else %}<div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center"><h3 class="font-bold">No booking requests</h3><p class="mt-1 text-muted">{% if user.role == "landlord" %}Booking requests for your listings will appear here.{% else %}Browse rooms and send a booking request when you find the right place.{% endif %}</p></div>{% endif %}
-  </section>
-  <section class="mb-12">
-    <div class="mb-4"><h2 class="text-2xl font-bold">{% if user.role == "landlord" %}Visit requests{% else %}Your visit requests{% endif %}</h2></div>
-    {% if visit_requests %}
-      <div class="grid gap-3">
-        {% for visit in visit_requests %}
-          <article class="flex flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-5 sm:flex-row sm:items-center">
-            <div>
-              <p class="eyebrow">{{ visit.property.get_property_type_display }} · {{ visit.property.city }}</p>
-              <h3 class="font-bold"><a class="text-ink hover:text-brand-600" href="{% url 'property_detail' visit.property.pk %}">{{ visit.property.title }}</a></h3>
-              <p class="mt-1">{{ visit.scheduled_for|date:"D, j M Y" }} at {{ visit.scheduled_for|time:"g:i A" }} · <span class="rounded-full px-2.5 py-1 text-xs font-bold {% if visit.status == 'confirmed' %}bg-emerald-100 text-emerald-800{% elif visit.status == 'requested' %}bg-amber-100 text-amber-800{% elif visit.status == 'declined' %}bg-rose-100 text-rose-800{% else %}bg-stone-100 text-stone-700{% endif %}">{{ visit.get_status_display }}</span></p>
-              {% if user.role == "landlord" %}<p>Requested by {{ visit.renter.get_full_name|default:visit.renter.username }} ({{ visit.renter.email }})</p>{% else %}<p>Service provider: {{ visit.property.owner.get_full_name|default:visit.property.owner.username }}</p>{% endif %}
-              {% if visit.message %}<p class="mt-2 italic text-muted">“{{ visit.message }}”</p>{% endif %}
-            </div>
-            <div class="flex flex-wrap gap-2">
-              {% if user.role == "landlord" and visit.status == "requested" %}
-                <form method="post" action="{% url 'visit_request_decide' visit.pk %}">{% csrf_token %}<input type="hidden" name="status" value="confirmed"><button class="btn-secondary border-0 bg-brand-600 text-white hover:bg-brand-700" type="submit">Confirm</button></form>
-                <form method="post" action="{% url 'visit_request_decide' visit.pk %}">{% csrf_token %}<input type="hidden" name="status" value="declined"><button class="btn-secondary" type="submit">Decline</button></form>
-              {% elif user.role == "renter" and visit.status == "requested" or user.role == "renter" and visit.status == "confirmed" %}
-                <form method="post" action="{% url 'visit_request_cancel' visit.pk %}">{% csrf_token %}<button class="btn-secondary" type="submit">Cancel request</button></form>
-              {% endif %}
-            </div>
-          </article>
-        {% endfor %}
-      </div>
-    {% else %}<div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center"><h3 class="font-bold">No visit requests</h3><p class="mt-1 text-muted">{% if user.role == "landlord" %}Requests from renters will appear here.{% else %}Find a place you like and request a visit.{% endif %}</p></div>{% endif %}
-  </section>
+
+  {% include "rentals/_request_list.html" with anchor="bookings" title="Booking requests" items=reservations kind="booking" role=role empty_title="No booking requests" empty_body="Booking requests will appear here when someone sends dates." %}
+
+  {% include "rentals/_request_list.html" with anchor="visits" title="Visit requests" items=visit_requests kind="visit" role=role empty_title="No visit requests" empty_body="Visit requests will appear here." %}
 {% endblock %}

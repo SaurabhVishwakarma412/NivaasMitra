@@ -1,11 +1,31 @@
 {% load static %}
-{% comment %}Hero section for landing page {% endcomment %}
-<section class="relative flex min-h-[600px] items-center justify-center overflow-hidden rounded-2xl bg-stone-100 px-6 py-20 sm:min-h-[520px] sm:px-12 lg:px-20">
-  <img src="{% static 'rentals/hero1-bg.jpg' %}" alt="" aria-hidden="true" class="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"/>
-  <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-white/65"></div>
-  <div class="relative z-10 mx-auto max-w-3xl text-center">
-    <h1 class="mb-4 text-4xl font-extrabold text-stone-950 sm:text-5xl lg:text-6xl">Find Your Perfect Home</h1>
-    <p class="mx-auto mb-4 max-w-2xl text-lg leading-relaxed text-stone-800 sm:text-xl">Explore houses, apartments, rooms and PGs. Book viewings or send your dates instantly.</p>
-    <a href="{% url 'listings' %}" class="inline-block rounded-lg bg-brand-600 p-3 mb-4 font-bold text-white shadow-md transition hover:bg-brand-700">Browse Listings</a>
+<section class="relative my-6 flex min-h-[440px] items-center justify-center overflow-hidden rounded-2xl bg-stone-100 px-6 py-16 sm:min-h-[520px] sm:px-12 lg:px-20">
+  <img src="{% static 'rentals/hero1-bg.jpg' %}" alt="" aria-hidden="true"
+       class="pointer-events-none absolute inset-0 h-full w-full object-cover object-center"/>
+  <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-slate-950/45"></div>
+
+  <div class="relative z-10 mx-auto w-full max-w-3xl text-center text-white">
+    <h1 class="mb-4 text-4xl font-extrabold leading-tight sm:text-5xl lg:text-6xl">
+      Find your perfect home
+    </h1>
+    <p class="mx-auto mb-6 max-w-2xl text-lg leading-relaxed text-slate-100 sm:text-xl">
+      Explore houses, apartments, rooms, PGs and hostels. Send a viewing or booking request in seconds.
+    </p>
+
+    <form method="get" action="{% url 'listings' %}"
+          class="mx-auto flex w-full max-w-2xl flex-col gap-2 rounded-xl bg-white p-2 shadow-lg sm:flex-row">
+      <input name="q" type="search" placeholder="City, area or keyword"
+             aria-label="Search rentals"
+             class="min-h-11 flex-1 rounded-lg border-0 bg-transparent px-4 text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-brand-600">
+      <button class="btn-primary min-h-11 shrink-0 px-5" type="submit">
+        Search rooms
+      </button>
+    </form>
+
+    <p class="mt-4 text-sm text-slate-200">
+      <a class="underline decoration-white/40 hover:decoration-white" href="{% url 'listings' %}">
+        Browse all listings →
+      </a>
+    </p>
   </div>
 </section>

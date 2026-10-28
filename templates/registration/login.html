@@ -2,28 +2,44 @@
 {% block title %}Log in · RentHouse{% endblock %}
 {% block content %}
   <div class="mx-auto my-12 max-w-md">
-    <p class="eyebrow">WELCOME BACK</p><h1 class="text-4xl font-bold">Log in to RentHouse</h1>
-    <form method="post" class="mt-6 grid gap-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
+    <p class="eyebrow">WELCOME BACK</p>
+    <h1 class="text-4xl font-bold">Log in to RentHouse</h1>
+    <p class="mt-2 text-muted">Continue where you left off.</p>
+
+    <form method="post" novalidate
+          class="mt-6 grid gap-4 rounded-xl border border-stone-200 bg-white p-6 shadow-sm">
       {% csrf_token %}
-      {% if form.non_field_errors %}<div class="field-error">{{ form.non_field_errors }}</div>{% endif %}
+      {% if form.non_field_errors %}
+        <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800">
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
       {% for field in form %}
-        {% if field.name == "role" %}
-          <fieldset class="grid gap-2">
-            <legend class="mb-1 text-sm font-semibold text-stone-700">{{ field.label }}</legend>
-            {% for choice in field %}
-              <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-stone-200 p-3 transition hover:border-brand-600 hover:bg-brand-50">
-                {{ choice.tag }}<span class="font-semibold text-ink">{{ choice.choice_label }}</span>
-              </label>
-            {% endfor %}
-            {% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
-          </fieldset>
-        {% else %}
-          <label class="form-label">{{ field.label }}{{ field }}{% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}</label>
-        {% endif %}
+        <label class="form-label" for="{{ field.id_for_label }}">
+          {{ field.label }}
+          {% if field.name == "password" %}
+            <div class="relative">
+              {{ field }}
+              <button type="button"
+                      class="absolute inset-y-0 right-2 my-auto h-8 rounded px-2 text-xs font-semibold text-muted hover:text-ink"
+                      data-toggle-password
+                      data-target="#{{ field.id_for_label }}"
+                      aria-label="Show password">Show</button>
+            </div>
+          {% else %}
+            {{ field }}
+          {% endif %}
+          {% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </label>
       {% endfor %}
-      <input type="hidden" name="next" value="{{ next }}">
+
+      <input type="hidden" name="next" value="{{ request.GET.next|default:'' }}">
       <button class="btn-primary w-full" type="submit">Log in</button>
-      <p class="text-center text-muted">New here? <a href="{% url 'signup' %}">Create an account</a>.</p>
+      <p class="text-center text-sm text-muted">
+        New here?
+        <a class="link" href="{% url 'signup' %}">Create an account</a>.
+      </p>
     </form>
   </div>
 {% endblock %}

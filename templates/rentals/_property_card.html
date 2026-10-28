@@ -1,0 +1,53 @@
+<article class="relative overflow-hidden rounded-xl border border-stone-200 bg-white transition hover:-translate-y-0.5 hover:shadow-lg">
+  {% if user.is_authenticated and user.role == "renter" %}
+    <form class="absolute right-3 top-3 z-10" method="post"
+          action="{% url 'saved_property_toggle' property.pk %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      {% if saved or property.pk in saved_property_ids %}
+        <input type="hidden" name="action" value="remove">
+        <button class="rounded-full bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
+                type="submit" aria-label="Remove {{ property.title }} from saved places">
+          ♥ Saved
+        </button>
+      {% else %}
+        <input type="hidden" name="action" value="save">
+        <button class="rounded-full bg-white/95 px-3 py-2 text-sm font-semibold text-ink shadow hover:bg-white"
+                type="submit" aria-label="Save {{ property.title }}">
+          ♡ Save
+        </button>
+      {% endif %}
+    </form>
+  {% endif %}
+
+  <a class="relative block h-52 overflow-hidden bg-brand-50"
+     href="{% url 'property_detail' property.pk %}">
+    {% if property.cover_image %}
+      <img class="h-full w-full object-cover" src="{{ property.cover_image.url }}"
+           alt="Cover photo for {{ property.title }}" loading="lazy">
+    {% else %}
+      <div class="grid h-full place-items-center bg-gradient-to-br from-brand-50 to-brand-100 font-semibold text-brand-600"
+           aria-label="No cover photo">Your next place</div>
+    {% endif %}
+    <span class="absolute left-3 top-3 rounded-full bg-white px-3 py-1 text-xs font-bold text-ink">
+      {{ property.get_property_type_display }}
+    </span>
+  </a>
+
+  <div class="p-4">
+    <p class="text-sm text-muted">{{ property.city }}</p>
+    <h3 class="my-1 text-lg font-bold">
+      <a class="text-ink hover:text-brand-600" href="{% url 'property_detail' property.pk %}">
+        {{ property.title }}
+      </a>
+    </h3>
+    <p class="font-bold text-brand-600">
+      ₹{{ property.monthly_rent|floatformat:0 }}
+      <span class="text-sm font-normal text-muted">/ month</span>
+    </p>
+    <p class="mt-2 text-sm text-muted">
+      {{ property.bedrooms }} bed · {{ property.bathrooms }} bath ·
+      Deposit ₹{{ property.security_deposit|floatformat:0 }}
+    </p>
+  </div>
+</article>

@@ -1,0 +1,86 @@
+<section id="{{ anchor }}" class="mb-12 scroll-mt-24">
+  <div class="mb-4">
+    <h2 class="section-title">{{ title }}</h2>
+  </div>
+
+  {% if items %}
+    <div class="grid gap-3">
+      {% for item in items %}
+        <article class="flex flex-col justify-between gap-4 rounded-xl border border-stone-200 bg-white p-5 sm:flex-row sm:items-center">
+          <div class="min-w-0">
+            <p class="eyebrow">
+              {{ item.property.get_property_type_display }} · {{ item.property.city }}
+            </p>
+            <h3 class="font-bold">
+              <a class="text-ink hover:text-brand-600"
+                 href="{% url 'property_detail' item.property.pk %}">
+                {{ item.property.title }}
+              </a>
+            </h3>
+
+            {% if kind == "booking" %}
+              <p class="mt-1 text-sm">
+                Requested stay:
+                {{ item.start_date|date:"j M Y" }} – {{ item.end_date|date:"j M Y" }}
+                <span class="badge badge-{{ item.status }} ml-1">{{ item.get_status_display }}</span>
+              </p>
+            {% else %}
+              <p class="mt-1 text-sm">
+                {{ item.scheduled_for|date:"D, j M Y" }}
+                at {{ item.scheduled_for|time:"g:i A" }}
+                <span class="badge badge-{{ item.status }} ml-1">{{ item.get_status_display }}</span>
+              </p>
+            {% endif %}
+
+            {% if role == "provider" %}
+              <p class="mt-1 text-sm text-muted">
+                Requested by {{ item.renter.get_full_name|default:item.renter.username }}
+                ({{ item.renter.email }})
+              </p>
+            {% else %}
+              <p class="mt-1 text-sm text-muted">
+                Provider: {{ item.property.owner.get_full_name|default:item.property.owner.username }}
+              </p>
+            {% endif %}
+
+            {% if item.message %}
+              <p class="mt-2 italic text-muted">"{{ item.message }}"</p>
+            {% endif %}
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            {% if role == "provider" and item.status == "requested" %}
+              {% if kind == "booking" %}
+                {% url "reservation_decide" item.pk as decision_url %}
+              {% else %}
+                {% url "visit_request_decide" item.pk as decision_url %}
+              {% endif %}
+              <form method="post" action="{{ decision_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="status" value="confirmed">
+                <button class="btn-primary" type="submit">Confirm</button>
+              </form>
+              <form method="post" action="{{ decision_url }}" data-confirm="Decline this request?">
+                {% csrf_token %}
+                <input type="hidden" name="status" value="declined">
+                <button class="btn-danger" type="submit">Decline</button>
+              </form>
+            {% elif role == "seeker" and item.status == "requested" or role == "seeker" and item.status == "confirmed" %}
+              {% if kind == "booking" %}
+                {% url "reservation_cancel" item.pk as cancel_url %}
+              {% else %}
+                {% url "visit_request_cancel" item.pk as cancel_url %}
+              {% endif %}
+              <form method="post" action="{{ cancel_url }}" data-confirm="Cancel this request?">
+                {% csrf_token %}
+                <button class="btn-secondary" type="submit">Cancel</button>
+              </form>
+            {% endif %}
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    {% include "rentals/_empty.html" with title=empty_title body=empty_body %}
+  {% endif %}
+</section>

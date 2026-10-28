@@ -4,49 +4,118 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#216b50">
   <meta name="description" content="Find and manage rentals with RentHouse.">
   <title>{% block title %}RentHouse{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'rentals/site.css' %}">
 </head>
 <body class="flex min-h-screen flex-col">
-  <header class="border-b border-stone-200 bg-white">
+  <a href="#main-content"
+     class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-slate-950 focus:px-4 focus:py-2 focus:text-white">
+    Skip to content
+  </a>
+
+  <header class="sticky top-0 z-40 border-b border-stone-200 bg-white/95 backdrop-blur">
     <div class="mx-auto flex min-h-16 w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 px-4 py-2 sm:min-h-[72px] sm:flex-nowrap sm:px-5 sm:py-0">
-      <a class="text-xl font-extrabold tracking-tight text-brand-600 sm:text-2xl" href="{% url 'home' %}">RentHouse</a>
-      <button class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-stone-200 text-ink hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-brand-600 sm:hidden"
-              type="button" data-menu-toggle aria-expanded="false" aria-controls="main-navigation" aria-label="Open navigation menu">
-        <svg data-menu-open-icon viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
-        <svg data-menu-close-icon viewBox="0 0 24 24" class="hidden h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/></svg>
+      <a class="text-xl font-extrabold tracking-tight text-brand-600 sm:text-2xl"
+         href="{% url 'home' %}">RentHouse</a>
+
+      <button type="button"
+              class="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-stone-200 text-ink hover:bg-stone-50 sm:hidden"
+              data-menu-toggle aria-expanded="false"
+              aria-controls="main-navigation" aria-label="Open navigation menu">
+        <svg data-menu-open-icon viewBox="0 0 24 24" class="h-5 w-5" fill="none"
+             stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+        <svg data-menu-close-icon viewBox="0 0 24 24" class="hidden h-5 w-5" fill="none"
+             stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" d="m6 6 12 12M18 6 6 18"/>
+        </svg>
       </button>
-      <nav id="main-navigation" class="hidden w-full flex-col gap-1 border-t border-stone-100 pb-2 pt-3 text-sm font-semibold sm:flex sm:w-auto sm:flex-row sm:items-center sm:gap-6 sm:border-0 sm:p-0" aria-label="Main navigation">
-        <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'home' %}">Home</a>
-        <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'listings' %}">Listings</a>
-<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'contact' %}">Contact</a>
-<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'about' %}">About</a>
-        {% if not user.is_authenticated or user.role == "renter" %}
-          <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'home' %}">Browse rooms</a>
-        {% endif %}
+
+      <nav id="main-navigation"
+           class="hidden w-full flex-col gap-1 border-t border-stone-100 pb-2 pt-3 text-sm font-semibold sm:flex sm:w-auto sm:flex-row sm:items-center sm:gap-5 sm:border-0 sm:p-0"
+           aria-label="Main navigation">
+        <a class="nav-link {% if request.resolver_match.url_name == 'home' %}nav-link-active{% endif %}"
+           href="{% url 'home' %}">Home</a>
+        <a class="nav-link {% if request.resolver_match.url_name == 'listings' %}nav-link-active{% endif %}"
+           href="{% url 'listings' %}">Listings</a>
+        <a class="nav-link {% if request.resolver_match.url_name == 'contact' %}nav-link-active{% endif %}"
+           href="{% url 'contact' %}">Contact</a>
+        <a class="nav-link {% if request.resolver_match.url_name == 'about' %}nav-link-active{% endif %}"
+           href="{% url 'about' %}">About</a>
+
         {% if user.is_authenticated %}
-          <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'dashboard' %}">Dashboard</a>
-          {% if user.role == "landlord" %}<a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'property_create' %}">Add a room</a>{% endif %}
-          <form class="px-3 py-2 sm:px-0 sm:py-0" method="post" action="{% url 'logout' %}">
-            {% csrf_token %}<button class="cursor-pointer border-0 bg-transparent p-0 text-ink hover:text-brand-600" type="submit">Log out</button>
+          <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}nav-link-active{% endif %}"
+             href="{% url 'dashboard' %}">Dashboard</a>
+          {% if user.role == "landlord" %}
+            <a class="btn-primary mx-3 mt-1 min-h-10 px-4 py-2 text-sm sm:mx-0 sm:mt-0"
+               href="{% url 'property_create' %}">+ Add a room</a>
+          {% endif %}
+          <form method="post" action="{% url 'logout' %}" class="px-3 py-2 sm:px-0 sm:py-0">
+            {% csrf_token %}
+            <button type="submit"
+                    class="cursor-pointer border-0 bg-transparent p-0 text-sm font-semibold text-ink transition hover:text-brand-600">
+              Log out
+            </button>
           </form>
         {% else %}
-          <a class="rounded-lg px-3 py-2 text-ink hover:bg-stone-50 hover:text-brand-600 sm:px-0 sm:py-2 sm:hover:bg-transparent" href="{% url 'login' %}">Log in</a>
-          <a class="btn-primary mx-3 mt-1 min-h-10 px-4 py-2 text-sm sm:mx-0 sm:mt-0" href="{% url 'signup' %}">Create account</a>
+          <a class="nav-link" href="{% url 'login' %}">Log in</a>
+          <a class="btn-primary mx-3 mt-1 min-h-10 px-4 py-2 text-sm sm:mx-0 sm:mt-0"
+             href="{% url 'signup' %}">Create account</a>
         {% endif %}
       </nav>
     </div>
   </header>
-  <main class="mx-auto w-full max-w-6xl min-w-0 flex-1 px-4 sm:px-5">
+
+  <main id="main-content" class="mx-auto w-full max-w-6xl min-w-0 flex-1 px-4 sm:px-5">
     {% if messages %}
       <div class="space-y-2 pt-5" aria-live="polite">
-        {% for message in messages %}<p class="rounded-lg px-4 py-3 {% if message.tags == 'error' %}bg-rose-50 text-rose-800{% else %}bg-emerald-50 text-emerald-800{% endif %}">{{ message }}</p>{% endfor %}
+        {% for message in messages %}
+          <p class="rounded-lg px-4 py-3 text-sm font-medium {% if message.tags == 'error' %}bg-rose-50 text-rose-800{% elif message.tags == 'warning' %}bg-amber-50 text-amber-800{% else %}bg-emerald-50 text-emerald-800{% endif %}">
+            {{ message }}
+          </p>
+        {% endfor %}
       </div>
     {% endif %}
     {% block content %}{% endblock %}
   </main>
-  <footer class="mt-12 border-t border-stone-200 bg-white px-5 py-6 text-center text-sm text-muted">RentHouse · A clearer way to find and manage a home.</footer>
+
+  <footer class="mt-16 border-t border-stone-200 bg-white">
+    <div class="mx-auto grid max-w-6xl gap-8 px-5 py-10 text-sm sm:grid-cols-3">
+      <div>
+        <p class="text-lg font-extrabold text-brand-600">RentHouse</p>
+        <p class="mt-2 text-muted">A clearer way to find and manage a home.</p>
+      </div>
+      <div class="flex flex-col gap-2">
+        <p class="font-semibold text-ink">Explore</p>
+        <a class="text-muted hover:text-brand-600" href="{% url 'listings' %}">Listings</a>
+        <a class="text-muted hover:text-brand-600" href="{% url 'about' %}">About</a>
+        <a class="text-muted hover:text-brand-600" href="{% url 'contact' %}">Contact</a>
+      </div>
+      <div class="flex flex-col gap-2">
+        <p class="font-semibold text-ink">Account</p>
+        {% if user.is_authenticated %}
+          <a class="text-muted hover:text-brand-600" href="{% url 'dashboard' %}">Dashboard</a>
+          <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button type="submit"
+                    class="cursor-pointer border-0 bg-transparent p-0 text-left text-muted hover:text-brand-600">
+              Log out
+            </button>
+          </form>
+        {% else %}
+          <a class="text-muted hover:text-brand-600" href="{% url 'login' %}">Log in</a>
+          <a class="text-muted hover:text-brand-600" href="{% url 'signup' %}">Create account</a>
+        {% endif %}
+      </div>
+    </div>
+    <p class="border-t border-stone-100 py-4 text-center text-xs text-muted">
+      © {% now "Y" %} RentHouse. Booking requests are confirmed by the service provider.
+    </p>
+  </footer>
+
   <script src="{% static 'rentals/site.js' %}" defer></script>
 </body>
 </html>

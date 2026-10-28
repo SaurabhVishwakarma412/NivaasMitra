@@ -1,73 +1,36 @@
 {% extends "base.html" %}
-{% block title %}All Listings – RentHouse{% endblock %}
+{% block title %}All listings · RentHouse{% endblock %}
 {% block content %}
   {% include "rentals/hero.html" %}
+
   <section class="mb-12">
+    {% include "rentals/_filter_bar.html" %}
+
+    {% if search_form.non_field_errors %}
+      <div class="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800">
+        {% for error in search_form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+      </div>
+    {% endif %}
+
     <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p class="eyebrow">ALL HOMES</p>
-        <h2 class="text-2xl font-bold">Explore all available places</h2>
+        <h1 class="section-title">Explore available places</h1>
       </div>
       <p class="text-sm text-muted" aria-live="polite">
         {% if request.GET %}{{ results_count }} place{{ results_count|pluralize }} found{% else %}{{ results_count }} place{{ results_count|pluralize }} to explore{% endif %}
       </p>
     </div>
+
     {% if properties %}
       <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {% for property in properties %}
-          <article class="relative overflow-hidden rounded-xl border border-stone-200 bg-white transition hover:-translate-y-0.5 hover:shadow-lg">
-            {% if user.is_authenticated and user.role == "renter" %}
-              <form class="absolute right-3 top-3 z-10" method="post" action="{% url 'saved_property_toggle' property.pk %}">
-                {% csrf_token %}
-                <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                {% if property.pk in saved_property_ids %}
-                  <input type="hidden" name="action" value="remove">
-                  <button class="rounded-full bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800" type="submit" aria-label="Remove {{ property.title }} from saved places">♥ Saved</button>
-                {% else %}
-                  <input type="hidden" name="action" value="save">
-                  <button class="rounded-full bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800" type="submit" aria-label="Save {{ property.title }}">♡ Save</button>
-                {% endif %}
-              </form>
-            {% endif %}
-            <a class="relative block h-52 overflow-hidden bg-brand-50" href="{% url 'property_detail' property.pk %}">
-              {% if property.cover_image %}
-                <img class="h-full w-full object-cover" src="{{ property.cover_image.url }}" alt="Cover photo for {{ property.title }}">
-              {% else %}
-                <div class="grid h-full place-items-center bg-gradient-to-br from-brand-50 to-brand-100 font-semibold text-brand-600" aria-label="No cover photo">Your next place</div>
-              {% endif %}
-              <span class="absolute left-3 top-3 rounded-full bg-white px-3 py-1 text-xs font-bold text-ink">{{ property.get_property_type_display }}</span>
-            </a>
-            <div class="p-4">
-              <p class="text-sm text-muted">{{ property.city }}, {{ property.state }} · Available {{ property.available_from|date:"j M Y" }}</p>
-              <h3 class="my-1 text-lg font-bold"><a class="text-ink hover:text-brand-600" href="{% url 'property_detail' property.pk %}">{{ property.title }}</a></h3>
-              <p class="font-bold text-brand-600">₹{{ property.monthly_rent|floatformat:0 }} <span class="text-sm font-normal text-muted">/ month</span></p>
-              <p class="mt-2 text-sm text-muted">{{ property.bedrooms }} bed · {{ property.bathrooms }} bath · Deposit ₹{{ property.security_deposit|floatformat:0 }}</p>
-            </div>
-          </article>
+          {% include "rentals/_property_card.html" with property=property %}
         {% endfor %}
       </div>
-      <nav class="mt-8 flex justify-center" aria-label="Pagination">
-        <ul class="inline-flex items-center -space-x-px">
-          {% if page_obj.has_previous %}
-            <li><a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}" class="px-3 py-2 ml-0 leading-tight text-gray-500 bg-white border border-gray-300 rounded-l-lg hover:bg-gray-100">Previous</a></li>
-          {% endif %}
-          {% for num in page_obj.paginator.page_range %}
-            {% if page_obj.number == num %}
-              <li><span class="px-3 py-2 leading-tight text-blue-600 bg-blue-50 border border-blue-300">{{ num }}</span></li>
-            {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
-              <li><a href="?page={{ num }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}" class="px-3 py-2 leading-tight text-gray-500 bg-white border border-gray-300 hover:bg-gray-100">{{ num }}</a></li>
-            {% endif %}
-          {% endfor %}
-          {% if page_obj.has_next %}
-            <li><a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}" class="px-3 py-2 leading-tight text-gray-500 bg-white border border-gray-300 rounded-r-lg hover:bg-gray-100">Next</a></li>
-          {% endif %}
-        </ul>
-      </nav>
+      {% include "rentals/_pagination.html" with page_obj=page_obj base_qs=base_qs %}
     {% else %}
-      <div class="rounded-xl border border-dashed border-stone-300 bg-white p-8 text-center">
-        <h3 class="font-bold">No matching places yet</h3>
-        <p class="mt-1 text-muted">Try adjusting your filters or come back later – new listings are added regularly.</p>
-      </div>
+      {% include "rentals/_empty.html" with title="No matching places yet" body="Try adjusting your filters or come back later. New listings are added regularly." %}
     {% endif %}
   </section>
 {% endblock %}
