@@ -1,10 +1,14 @@
 from django import forms
-from django.contrib.auth import authenticate
 from django.core.files.uploadedfile import UploadedFile
 from django.utils import timezone
 
 from .models import Property, Reservation, User, VisitRequest
-from .repository import find_user_by_email, find_user_by_username, get_image_count
+from .repository import (
+    authenticate_user,
+    find_user_by_email,
+    find_user_by_username,
+    get_image_count,
+)
 
 
 class MultipleImageInput(forms.ClearableFileInput):
@@ -122,12 +126,42 @@ class RoleBasedAuthenticationForm(forms.Form):
         password = cleaned_data.get("password")
         role = cleaned_data.get("role")
         if username and password and role:
-            account = authenticate(username=username, password=password)
+            account = authenticate_user(username=username, password=password)
             if account is None or account.role != role:
                 raise forms.ValidationError(
                     "Please enter valid credentials for the selected account type."
                 )
             self.user = account
+        return cleaned_data
+
+
+class PasswordResetRequestForm(forms.Form):
+    email = forms.EmailField()
+
+    def clean_email(self):
+        return self.cleaned_data["email"].strip().lower()
+
+
+class PasswordResetSetPasswordForm(forms.Form):
+    new_password1 = forms.CharField(
+        label="New password",
+        strip=False,
+        min_length=8,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+        help_text="At least 8 characters.",
+    )
+    new_password2 = forms.CharField(
+        label="Confirm new password",
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        password1 = cleaned_data.get("new_password1")
+        password2 = cleaned_data.get("new_password2")
+        if password1 and password2 and password1 != password2:
+            self.add_error("new_password2", "The two password fields didn’t match.")
         return cleaned_data
 
 

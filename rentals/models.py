@@ -1,43 +1,101 @@
-import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
 
 from django.conf import settings
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.hashers import check_password, make_password
 from django.db import models
-from django.db.models import Q
-from django.utils import timezone
-from django_mongodb_backend.fields import EmbeddedModelArrayField
-from django_mongodb_backend.models import EmbeddedModel
 
 
-def new_model_id():
-    return uuid.uuid4().hex
-
-
-def property_cover_path(instance, filename):
-    return f"properties/{instance.owner_id}/covers/{filename}"
-
-
-class User(AbstractUser):
+class User:
     class Role(models.TextChoices):
         RENTER = "renter", "Home seeker"
         LANDLORD = "landlord", "Service provider"
 
-    role = models.CharField(max_length=10, choices=Role.choices, default=Role.RENTER)
-    email = models.EmailField(unique=True)
+    def __init__(
+        self,
+        *,
+        id,
+        username,
+        email,
+        first_name="",
+        last_name="",
+        role=Role.RENTER,
+        password="",
+        is_active=True,
+        is_staff=False,
+        is_superuser=False,
+    ):
+        self.id = id
+        self.pk = id
+        self.username = username
+        self.email = email
+        self.first_name = first_name
+        self.last_name = last_name
+        self.role = role
+        self.password = password
+        self.is_active = is_active
+        self.is_staff = is_staff
+        self.is_superuser = is_superuser
 
-    def save(self, *args, **kwargs):
-        self.username = self.username.strip().lower()
-        self.email = self.email.strip().lower()
-        return super().save(*args, **kwargs)
+    @property
+    def is_authenticated(self):
+        return True
+
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+    def get_role_display(self):
+        return self.Role(self.role).label
+
+    def set_password(self, raw_password):
+        self.password = make_password(raw_password)
+
+    def check_password(self, raw_password):
+        return check_password(raw_password, self.password)
 
 
-class PropertyImage(EmbeddedModel):
-    image_id = models.CharField(max_length=32, default=new_model_id)
-    image = models.ImageField()
-    created_at = models.DateTimeField(default=timezone.now)
+class AnonymousUser:
+    id = None
+    pk = None
+    role = None
+    is_staff = False
+    is_superuser = False
+    is_active = False
+    is_authenticated = False
+    username = ""
+    email = ""
+    first_name = ""
+    last_name = ""
+
+    def get_full_name(self):
+        return ""
+
+    def get_role_display(self):
+        return ""
 
 
-class Property(models.Model):
+@dataclass
+class StoredFile:
+    name: str = ""
+
+    def __bool__(self):
+        return bool(self.name)
+
+    @property
+    def url(self):
+        return f"{settings.MEDIA_URL}{self.name}" if self.name else ""
+
+
+@dataclass
+class PropertyImage:
+    image_id: str
+    image: StoredFile
+    created_at: datetime
+
+
+@dataclass
+class Property:
     class PropertyType(models.TextChoices):
         HOUSE = "house", "House"
         PG = "pg", "Paying guest"
@@ -50,119 +108,43 @@ class Property(models.Model):
         PAUSED = "paused", "Paused"
         ARCHIVED = "archived", "Archived"
 
-    id = models.CharField(primary_key=True, max_length=32, default=new_model_id, editable=False)
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="properties",
-    )
-    title = models.CharField(max_length=120)
-    description = models.TextField(max_length=4000)
-    property_type = models.CharField(max_length=20, choices=PropertyType.choices)
-    monthly_rent = models.DecimalField(max_digits=10, decimal_places=2)
-    security_deposit = models.DecimalField(max_digits=10, decimal_places=2)
-    address = models.CharField(max_length=250)
-    city = models.CharField(max_length=100)
-    state = models.CharField(max_length=100)
-    postal_code = models.CharField(max_length=12)
-    bedrooms = models.PositiveSmallIntegerField()
-    bathrooms = models.PositiveSmallIntegerField()
-    available_from = models.DateField()
-    status = models.CharField(
-        max_length=10,
-        choices=Status.choices,
-        default=Status.DRAFT,
-        db_index=True,
-    )
-    cover_image = models.ImageField(
-        upload_to=property_cover_path,
-        blank=True,
-    )
-    gallery = EmbeddedModelArrayField(PropertyImage, default=list, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    id: object
+    owner_id: object
+    owner: User
+    title: str
+    description: str
+    property_type: str
+    monthly_rent: Decimal
+    security_deposit: Decimal
+    address: str
+    city: str
+    state: str
+    postal_code: str
+    bedrooms: int
+    bathrooms: int
+    available_from: date
+    status: str
+    cover_image: StoredFile = field(default_factory=StoredFile)
+    gallery: list = field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
-    class Meta:
-        ordering = ("-created_at",)
-        indexes = [
-            models.Index(fields=("status", "city")),
-            models.Index(fields=("owner", "-created_at")),
-        ]
-
-    def __str__(self):
-        return self.title
+    @property
+    def pk(self):
+        return self.id
 
     @property
     def gallery_images(self):
-        return list(self.gallery)
+        return self.gallery
 
-
-class SavedProperty(models.Model):
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="saved_properties",
-    )
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="saved_by",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=("renter", "property"),
-                name="unique_saved_property_per_renter",
-            )
-        ]
-
-
-class VisitRequest(models.Model):
-    class Status(models.TextChoices):
-        REQUESTED = "requested", "Requested"
-        CONFIRMED = "confirmed", "Confirmed"
-        DECLINED = "declined", "Declined"
-        CANCELLED = "cancelled", "Cancelled"
-        COMPLETED = "completed", "Completed"
-
-    id = models.CharField(primary_key=True, max_length=32, default=new_model_id, editable=False)
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="visit_requests",
-    )
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="visit_requests",
-    )
-    scheduled_for = models.DateTimeField()
-    message = models.CharField(max_length=1000, blank=True)
-    status = models.CharField(
-        max_length=12,
-        choices=Status.choices,
-        default=Status.REQUESTED,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ("scheduled_for",)
-        constraints = [
-            models.UniqueConstraint(
-                fields=("property", "renter"),
-                condition=Q(status__in=("requested", "confirmed")),
-                name="one_open_visit_per_renter_property",
-            )
-        ]
+    def get_property_type_display(self):
+        return self.PropertyType(self.property_type).label
 
     def get_status_display(self):
         return self.Status(self.status).label
 
 
-class Reservation(models.Model):
+class VisitRequest:
     class Status(models.TextChoices):
         REQUESTED = "requested", "Requested"
         CONFIRMED = "confirmed", "Confirmed"
@@ -170,31 +152,46 @@ class Reservation(models.Model):
         CANCELLED = "cancelled", "Cancelled"
         COMPLETED = "completed", "Completed"
 
-    id = models.CharField(primary_key=True, max_length=32, default=new_model_id, editable=False)
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="reservations",
-    )
-    renter = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="reservations",
-    )
-    start_date = models.DateField()
-    end_date = models.DateField()
-    message = models.CharField(max_length=1000, blank=True)
-    status = models.CharField(
-        max_length=12,
-        choices=Status.choices,
-        default=Status.REQUESTED,
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    def __init__(
+        self, *, id, property, renter, scheduled_for, message="", status=Status.REQUESTED,
+        created_at=None, updated_at=None,
+    ):
+        self.id = id
+        self.pk = id
+        self.property = property
+        self.renter = renter
+        self.scheduled_for = scheduled_for
+        self.message = message
+        self.status = status
+        self.created_at = created_at
+        self.updated_at = updated_at
 
-    class Meta:
-        ordering = ("start_date", "created_at")
-        indexes = [models.Index(fields=("property", "start_date"))]
+    def get_status_display(self):
+        return self.Status(self.status).label
+
+
+class Reservation:
+    class Status(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        CONFIRMED = "confirmed", "Confirmed"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+        COMPLETED = "completed", "Completed"
+
+    def __init__(
+        self, *, id, property, renter, start_date, end_date, message="",
+        status=Status.REQUESTED, created_at=None, updated_at=None,
+    ):
+        self.id = id
+        self.pk = id
+        self.property = property
+        self.renter = renter
+        self.start_date = start_date
+        self.end_date = end_date
+        self.message = message
+        self.status = status
+        self.created_at = created_at
+        self.updated_at = updated_at
 
     def get_status_display(self):
         return self.Status(self.status).label

@@ -5,11 +5,11 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login as auth_login
-from django.contrib.auth import logout as auth_logout
 from django.core.files.storage import default_storage
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
+from django.core import signing
+from django.core.signing import BadSignature, SignatureExpired
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -20,6 +20,8 @@ from .forms import (
     ContactForm,
     PropertyForm,
     PropertySearchForm,
+    PasswordResetRequestForm,
+    PasswordResetSetPasswordForm,
     ReservationDecisionForm,
     ReservationForm,
     RoleBasedAuthenticationForm,
@@ -39,11 +41,14 @@ from .repository import (
     get_property,
     get_reservation,
     get_visit,
+    get_user,
+    find_user_by_email,
     list_properties,
     list_reservations,
     list_saved_properties,
     list_visits,
     saved_property_ids,
+    set_user_password,
     set_saved_property,
     update_property,
     update_property_status,
@@ -148,7 +153,8 @@ def sign_up(request):
             form.add_error(None, str(error))
         else:
             messages.success(request, "Your account is ready.")
-            auth_login(request, user)
+            request.session.flush()
+            request.session["user_id"] = str(user.id)
             return redirect("dashboard")
     return render(request, "registration/signup.html", {"form": form})
 
@@ -160,7 +166,8 @@ def login_view(request):
     next_url = request.POST.get("next") or request.GET.get("next", "")
     if request.method == "POST" and form.is_valid():
         user = form.user
-        auth_login(request, user)
+        request.session.flush()
+        request.session["user_id"] = str(user.id)
         if next_url and url_has_allowed_host_and_scheme(
             next_url,
             allowed_hosts={request.get_host()},
@@ -179,9 +186,76 @@ def login_view(request):
 
 @require_POST
 def logout_view(request):
-    auth_logout(request)
+    request.session.flush()
     response = redirect("home")
     return response
+
+
+def password_reset(request):
+    if request.user.is_authenticated:
+        return redirect("dashboard")
+    form = PasswordResetRequestForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        user = find_user_by_email(form.cleaned_data["email"])
+        if user is not None and user.is_active:
+            token = signing.dumps(
+                {"id": str(user.id), "password": user.password},
+                salt="rentals.password-reset",
+            )
+            reset_path = reverse(
+                "password_reset_confirm",
+                kwargs={"uidb64": str(user.id), "token": token},
+            )
+            send_mail(
+                subject="Reset your RentHouse password",
+                message=(
+                    "We received a request to reset your RentHouse account password.\n\n"
+                    f"Choose a new password using this link:\n"
+                    f"{request.build_absolute_uri(reset_path)}\n\n"
+                    "If you did not request a reset, you can ignore this email."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        return redirect("password_reset_done")
+    return render(request, "registration/password_reset_form.html", {"form": form})
+
+
+def password_reset_done(request):
+    return render(request, "registration/password_reset_done.html")
+
+
+def password_reset_confirm(request, uidb64, token):
+    user = None
+    valid_link = False
+    try:
+        token_data = signing.loads(
+            token,
+            salt="rentals.password-reset",
+            max_age=60 * 60,
+        )
+    except (BadSignature, SignatureExpired):
+        token_data = None
+    if token_data and token_data.get("id") == uidb64:
+        user = get_user(uidb64)
+        valid_link = bool(user and user.password == token_data.get("password"))
+
+    form = PasswordResetSetPasswordForm(request.POST or None)
+    if request.method == "POST" and valid_link and form.is_valid():
+        if not set_user_password(user.id, form.cleaned_data["new_password1"]):
+            valid_link = False
+        else:
+            return redirect("password_reset_complete")
+    return render(
+        request,
+        "registration/password_reset_confirm.html",
+        {"form": form, "validlink": valid_link},
+    )
+
+
+def password_reset_complete(request):
+    return render(request, "registration/password_reset_complete.html")
 
 
 def contact(request):

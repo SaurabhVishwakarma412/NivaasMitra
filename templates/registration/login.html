@@ -34,6 +34,9 @@
         </label>
       {% endfor %}
 
+      <a class="link -mt-2 text-sm" href="{% url 'password_reset' %}">
+        Forgot your password?
+      </a>
       <input type="hidden" name="next" value="{{ request.GET.next|default:'' }}">
       <button class="btn-primary w-full" type="submit">Log in</button>
       <p class="text-center text-sm text-muted">

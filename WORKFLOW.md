@@ -1,9 +1,9 @@
 # RentHouse workflow
 
-RentHouse is a Django rental platform using MongoDB's official Django backend,
-built-in authentication and sessions, and Tailwind CSS. It has two account roles:
-**Service provider** lists rentals, and **Home seeker** searches, requests
-viewings, and submits date-based booking requests.
+RentHouse is a Django rental platform using direct PyMongo access to MongoDB,
+MongoDB-backed authentication sessions, and Tailwind CSS. It has two account
+roles: **Service provider** lists rentals, and **Home seeker** searches,
+requests viewings, and submits date-based booking requests.
 
 ## Project structure
 
@@ -19,12 +19,15 @@ NivaasMitra/
 │   ├── __init__.py
 │   ├── apps.py
 │   ├── forms.py                    # Form definitions and input validation
-│   ├── models.py                   # Django ORM models and custom user
-│   ├── repository.py               # ORM queries and domain operations
+│   ├── models.py                   # Lightweight domain objects
+│   ├── database.py                 # PyMongo client, collections, and indexes
+│   ├── repository.py               # Direct PyMongo queries and domain operations
+│   ├── sessions.py                 # MongoDB-backed Django session store
+│   ├── middleware.py               # Mongo-backed authentication
+│   ├── validation.py               # Insert validation and MongoDB JSON Schemas
 │   ├── tests.py                    # Application tests
 │   ├── urls.py                     # Rental app URL routes
 │   └── views.py                    # Request handlers
-├── mongo_migrations/               # MongoDB-compatible Django migrations
 ├── static/
 │   └── rentals/                    # Front-end assets
 │       ├── hero-bg.jpg
@@ -77,6 +80,13 @@ NivaasMitra/
 4. Track viewing and booking statuses on the dashboard; cancel a requested or
    confirmed request when needed.
 
+### Account recovery
+
+1. Select **Forgot your password?** on the login page and enter the account
+   email address.
+2. Follow the emailed, time-limited reset link to choose a new password of at
+   least eight characters.
+
 ## Important rules
 
 - Only published properties appear in public search. Providers can manage only
@@ -97,8 +107,8 @@ NivaasMitra/
   property is allowed.
 - Forms validate user input and image uploads; role and ownership checks
   protect actions. State-changing forms use Django CSRF protection. Accounts
-  use Django password hashers, database-backed sessions, and Django's
-  authentication middleware.
+  use Django password hashers, PyMongo-backed sessions, and custom
+  PyMongo-backed authentication middleware.
 - Booking/visit email notifications, payments, identity verification and
   maintenance workflows are not implemented. The contact form sends email
   using the configured mail backend. Configure backups and production security
@@ -106,29 +116,42 @@ NivaasMitra/
 
 ## MongoDB document model
 
-The official Django MongoDB backend manages the app's MongoDB collections and
-indexes. Property gallery photos are embedded in each property document;
-users, saved properties, visits, reservations, and sessions remain separate
-documents because they have independent lifecycles and queries. Image files
-are stored under `MEDIA_ROOT`, while MongoDB stores their relative paths.
-Connection settings come from `MONGODB_URI` and `MONGODB_NAME` in `.env`.
+The app's `rentals/repository.py` module contains direct PyMongo queries.
+Property gallery photos are embedded in each property document; accounts,
+saved properties, visits, reservations, and sessions are separate documents.
+Image files are stored under `MEDIA_ROOT`, while MongoDB stores their relative
+paths. Connection settings come from `MONGODB_URI` and `MONGODB_NAME` in `.env`.
+Required indexes are created automatically when the app first connects. Django
+migrations are not used; existing MongoDB documents must match the repository's
+document schema. Python validation runs before repository writes, and
+MongoDB `$jsonSchema` collection validators independently enforce document
+fields, types, allowed status values, and gallery size at the database.
 
-Run `manage.py migrate` to create or update the collections and indexes.
-Existing SQLite data is not imported automatically, and existing MongoDB data
-must already match the application's document schema. Back up existing data
-before changing the configured database or applying migrations.
+For example, `repository.py` searches with a MongoDB filter:
+
+```python
+collection.find({
+    "status": "published",
+    "city": {"$regex": "Pune", "$options": "i"},
+})
+```
+
+A property is one document with embedded gallery metadata; related accounts,
+saved properties, visits, bookings, and sessions use their own collections.
+This keeps common property details and gallery reads together while preserving
+separate request and account lifecycles.
 
 ## How a request works
 
 ```text
 Browser -> rentals/urls.py -> rentals/views.py -> rentals/forms.py
-        -> rentals/repository.py -> Django ORM -> MongoDB -> templates/
+        -> rentals/repository.py -> PyMongo -> MongoDB -> templates/
 ```
 
-URLs route requests to views. Django middleware authenticates sessions; views
-check role and ownership; forms validate submitted data; repository helpers
-enforce domain rules and read/write MongoDB documents; templates render the
-response.
+URLs route requests to views. Middleware loads MongoDB-backed sessions and
+accounts; views check role and ownership; forms validate submitted data;
+repository helpers enforce domain rules and query MongoDB documents directly;
+templates render the response.
 
 ## Run and verify locally
 
@@ -140,12 +163,11 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m pip install -r requirements.txt
 npm install
 npm run css:build
-python manage.py migrate
 python manage.py runserver
 ```
 
-Before running migrations, configure `MONGODB_URI` and `MONGODB_NAME` in `.env`
-for a running MongoDB deployment. See README.md for setup details.
+Configure `MONGODB_URI` and `MONGODB_NAME` in `.env` for a running MongoDB
+deployment. See README.md for setup details.
 
 Open `http://127.0.0.1:8000/` and create accounts through the site. Check the
 project with:
@@ -154,3 +176,10 @@ project with:
 python manage.py check
 python manage.py test
 ```
+
+rentals/repository.py — the main file for direct PyMongo queries and inserts.
+rentals/database.py — connects to MongoDB and sets up collection validators and indexes.
+rentals/validation.py — basic validation rules and MongoDB document schemas.
+rentals/sessions.py — reads and writes sessions in MongoDB.
+config/settings.py — MongoDB connection settings, including database name and URI.
+rentals/forms.py — validates submitted form data before it reaches the
