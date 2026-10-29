@@ -4,6 +4,9 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
+from django_mongodb_backend.fields import EmbeddedModelArrayField
+from django_mongodb_backend.models import EmbeddedModel
 
 
 def new_model_id():
@@ -12,10 +15,6 @@ def new_model_id():
 
 def property_cover_path(instance, filename):
     return f"properties/{instance.owner_id}/covers/{filename}"
-
-
-def property_gallery_path(instance, filename):
-    return f"properties/{instance.property.owner_id}/gallery/{filename}"
 
 
 class User(AbstractUser):
@@ -30,6 +29,12 @@ class User(AbstractUser):
         self.username = self.username.strip().lower()
         self.email = self.email.strip().lower()
         return super().save(*args, **kwargs)
+
+
+class PropertyImage(EmbeddedModel):
+    image_id = models.CharField(max_length=32, default=new_model_id)
+    image = models.ImageField()
+    created_at = models.DateTimeField(default=timezone.now)
 
 
 class Property(models.Model):
@@ -73,6 +78,7 @@ class Property(models.Model):
         upload_to=property_cover_path,
         blank=True,
     )
+    gallery = EmbeddedModelArrayField(PropertyImage, default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -88,21 +94,7 @@ class Property(models.Model):
 
     @property
     def gallery_images(self):
-        return list(self.gallery.all())
-
-
-class PropertyImage(models.Model):
-    id = models.CharField(primary_key=True, max_length=32, default=new_model_id, editable=False)
-    property = models.ForeignKey(
-        Property,
-        on_delete=models.CASCADE,
-        related_name="gallery",
-    )
-    image = models.ImageField(upload_to=property_gallery_path)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ("created_at",)
+        return list(self.gallery)
 
 
 class SavedProperty(models.Model):
@@ -203,12 +195,6 @@ class Reservation(models.Model):
     class Meta:
         ordering = ("start_date", "created_at")
         indexes = [models.Index(fields=("property", "start_date"))]
-        constraints = [
-            models.CheckConstraint(
-                condition=Q(end_date__gt=models.F("start_date")),
-                name="reservation_end_after_start",
-            )
-        ]
 
     def get_status_display(self):
         return self.Status(self.status).label

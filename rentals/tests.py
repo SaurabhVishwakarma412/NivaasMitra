@@ -1,14 +1,10 @@
-import io
-import json
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import make_password
 from django.core import mail
-from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -16,7 +12,7 @@ from django.utils import timezone
 from PIL import Image
 from io import BytesIO
 
-from .models import Property, PropertyImage, Reservation, SavedProperty, VisitRequest
+from .models import Property, Reservation, SavedProperty, VisitRequest
 from .repository import (
     create_property,
     create_reservation,
@@ -219,153 +215,6 @@ class RentalWorkflowTests(TestCase):
         self.assertContains(response, "at least 8 characters")
         self.assertFalse(User.objects.filter(username="short-password-user").exists())
 
-    def test_mongo_extended_json_export_import_preserves_related_records_and_media(self):
-        source_user_id = "aaaaaaaaaaaaaaaaaaaaaaaa"
-        source_owner_id = "ffffffffffffffffffffffff"
-        source_property_id = "bbbbbbbbbbbbbbbbbbbbbbbb"
-        source_image_id = "cccccccccccccccccccccccc"
-        source_visit_id = "dddddddddddddddddddddddd"
-        source_reservation_id = "eeeeeeeeeeeeeeeeeeeeeeee"
-        future_datetime = (timezone.now() + timedelta(days=4)).isoformat()
-        start_date = (timezone.localdate() + timedelta(days=5)).isoformat()
-        end_date = (timezone.localdate() + timedelta(days=8)).isoformat()
-        user_password = "legacy-account-password"
-
-        collections = {
-            "users": [
-                {
-                    "_id": {"$oid": source_user_id},
-                    "username": "legacy-renter",
-                    "email": "legacy@example.com",
-                    "first_name": "Legacy",
-                    "last_name": "Renter",
-                    "role": User.Role.RENTER,
-                    "password_hash": make_password(user_password),
-                    "is_active": True,
-                    "created_at": {"$date": "2024-01-01T00:00:00Z"},
-                },
-                {
-                    "_id": {"$oid": source_owner_id},
-                    "username": "legacy-landlord",
-                    "email": "legacy-landlord@example.com",
-                    "first_name": "Legacy",
-                    "last_name": "Landlord",
-                    "role": User.Role.LANDLORD,
-                    "password_hash": make_password("legacy-landlord-password"),
-                    "is_active": True,
-                    "created_at": {"$date": "2024-01-01T00:00:00Z"},
-                },
-            ],
-            "properties": [
-                {
-                    "_id": {"$oid": source_property_id},
-                    "owner_id": {"$oid": source_owner_id},
-                    "title": "Imported home",
-                    "description": "Imported from the old database.",
-                    "property_type": Property.PropertyType.APARTMENT,
-                    "monthly_rent": {"$numberDecimal": "24000.00"},
-                    "security_deposit": {"$numberDecimal": "48000.00"},
-                    "address": "1 Old Road",
-                    "city": "Pune",
-                    "state": "Maharashtra",
-                    "postal_code": "411001",
-                    "bedrooms": 2,
-                    "bathrooms": 1,
-                    "available_from": timezone.localdate().isoformat(),
-                    "status": Property.Status.PUBLISHED,
-                    "cover_image": "covers/legacy.png",
-                    "created_at": {"$date": "2024-01-02T00:00:00Z"},
-                    "updated_at": {"$date": "2024-01-03T00:00:00Z"},
-                }
-            ],
-            "property_images": [
-                {
-                    "_id": {"$oid": source_image_id},
-                    "property_id": {"$oid": source_property_id},
-                    "image": "gallery/legacy.png",
-                    "created_at": {"$date": "2024-01-04T00:00:00Z"},
-                }
-            ],
-            "saved_properties": [
-                {
-                    "_id": {"$oid": "222222222222222222222222"},
-                    "renter_id": {"$oid": source_user_id},
-                    "property_id": {"$oid": source_property_id},
-                }
-            ],
-            "visit_requests": [
-                {
-                    "_id": {"$oid": source_visit_id},
-                    "property_id": {"$oid": source_property_id},
-                    "renter_id": {"$oid": source_user_id},
-                    "scheduled_for": {"$date": future_datetime},
-                    "message": "Imported visit",
-                    "status": VisitRequest.Status.REQUESTED,
-                    "created_at": {"$date": "2024-01-05T00:00:00Z"},
-                    "updated_at": {"$date": "2024-01-05T00:00:00Z"},
-                }
-            ],
-            "reservations": [
-                {
-                    "_id": {"$oid": source_reservation_id},
-                    "property_id": {"$oid": source_property_id},
-                    "renter_id": {"$oid": source_user_id},
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "message": "Imported booking",
-                    "status": Reservation.Status.REQUESTED,
-                    "created_at": {"$date": "2024-01-06T00:00:00Z"},
-                    "updated_at": {"$date": "2024-01-06T00:00:00Z"},
-                }
-            ],
-        }
-
-        with TemporaryDirectory() as export_directory, TemporaryDirectory() as source_media:
-            for collection, documents in collections.items():
-                export_path = Path(export_directory) / f"{collection}.json"
-                export_path.write_text(
-                    "".join(json.dumps(document) + "\n" for document in documents),
-                    encoding="utf-8",
-                )
-            for relative_path in ("covers/legacy.png", "gallery/legacy.png"):
-                media_path = Path(source_media) / relative_path
-                media_path.parent.mkdir(parents=True, exist_ok=True)
-                media_path.write_bytes(
-                    self.image_upload("photo.png").read()
-                )
-
-            with TemporaryDirectory() as imported_media:
-                with override_settings(MEDIA_ROOT=imported_media):
-                    call_command(
-                        "import_mongo_export",
-                        directory=export_directory,
-                        media_source=source_media,
-                        stdout=io.StringIO(),
-                    )
-
-                    imported_user = User.objects.get(username="legacy-renter")
-                    imported_property = Property.objects.get(pk=source_property_id)
-                    imported_visit = VisitRequest.objects.get(pk=source_visit_id)
-                    imported_reservation = Reservation.objects.get(
-                        pk=source_reservation_id
-                    )
-
-                    self.assertTrue(imported_user.check_password(user_password))
-                    self.assertEqual(
-                        imported_property.owner.username,
-                        "legacy-landlord",
-                    )
-                    self.assertEqual(imported_property.gallery.count(), 1)
-                    self.assertEqual(imported_property.saved_by.count(), 1)
-                    self.assertEqual(imported_visit.renter, imported_user)
-                    self.assertEqual(imported_reservation.renter, imported_user)
-                    self.assertTrue(
-                        (Path(imported_media) / "covers/legacy.png").is_file()
-                    )
-                    self.assertTrue(
-                        (Path(imported_media) / "gallery/legacy.png").is_file()
-                    )
-
     def test_owner_can_publish_draft_but_another_owner_cannot_edit_it(self):
         self.login(self.other_landlord)
         response = self.client.get(reverse("property_edit", args=[self.draft.pk]))
@@ -543,7 +392,7 @@ class RentalWorkflowTests(TestCase):
 
                 self.assertRedirects(response, reverse("dashboard"))
                 property_listing = Property.objects.get(title="Room with balcony")
-                images = list(PropertyImage.objects.filter(property=property_listing))
+                images = property_listing.gallery_images
                 self.assertEqual(len(images), 2)
                 self.assertTrue(
                     all((Path(media_directory) / image.image.name).is_file() for image in images)
@@ -554,6 +403,23 @@ class RentalWorkflowTests(TestCase):
                 )
                 self.assertEqual(detail.status_code, 200)
                 self.assertContains(detail, "room.png")
+
+                removed_image = images[0]
+                response = self.client.post(
+                    reverse(
+                        "property_image_delete",
+                        args=[property_listing.pk, removed_image.image_id],
+                    )
+                )
+                self.assertRedirects(
+                    response,
+                    reverse("property_edit", args=[property_listing.pk]),
+                )
+                property_listing.refresh_from_db()
+                self.assertEqual(len(property_listing.gallery_images), 1)
+                self.assertFalse(
+                    (Path(media_directory) / removed_image.image.name).exists()
+                )
 
     def test_provider_cannot_create_a_listing_as_a_renter(self):
         self.login(self.renter)

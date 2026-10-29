@@ -1,7 +1,7 @@
 # RentHouse workflow
 
-RentHouse is a Django rental platform using Django's ORM, PostgreSQL, built-in
-authentication and sessions, and Tailwind CSS. It has two account roles:
+RentHouse is a Django rental platform using MongoDB's official Django backend,
+built-in authentication and sessions, and Tailwind CSS. It has two account roles:
 **Service provider** lists rentals, and **Home seeker** searches, requests
 viewings, and submits date-based booking requests.
 
@@ -19,13 +19,12 @@ NivaasMitra/
 │   ├── __init__.py
 │   ├── apps.py
 │   ├── forms.py                    # Form definitions and input validation
-│   ├── management/commands/        # One-time MongoDB export importer
-│   ├── migrations/                 # Django database migrations
 │   ├── models.py                   # Django ORM models and custom user
 │   ├── repository.py               # ORM queries and domain operations
 │   ├── tests.py                    # Application tests
 │   ├── urls.py                     # Rental app URL routes
 │   └── views.py                    # Request handlers
+├── mongo_migrations/               # MongoDB-compatible Django migrations
 ├── static/
 │   └── rentals/                    # Front-end assets
 │       ├── hero-bg.jpg
@@ -105,37 +104,30 @@ NivaasMitra/
   using the configured mail backend. Configure backups and production security
   before using real customer data.
 
-## Django persistence
+## MongoDB document model
 
-Django's ORM stores the custom role-aware user, properties, gallery photos,
-saved properties, visits, reservations, and sessions in PostgreSQL. Django
-migrations create and evolve the relational schema. Connection values come
-from the `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`,
-and `POSTGRES_PORT` variables in `.env`. Uploaded image contents live in
-`MEDIA_ROOT`; PostgreSQL stores their relative paths.
+The official Django MongoDB backend manages the app's MongoDB collections and
+indexes. Property gallery photos are embedded in each property document;
+users, saved properties, visits, reservations, and sessions remain separate
+documents because they have independent lifecycles and queries. Image files
+are stored under `MEDIA_ROOT`, while MongoDB stores their relative paths.
+Connection settings come from `MONGODB_URI` and `MONGODB_NAME` in `.env`.
 
-To preserve records from the existing SQLite database, migrate the PostgreSQL
-schema and run `manage.py import_sqlite_data`. The importer reads `db.sqlite3`
-without modifying it, requires the PostgreSQL rentals tables to be empty, and
-copies records atomically. See README.md for details.
-
-Existing MongoDB data is not deleted or accessed by the running app. To retain
-it, export the six collections as canonical Extended JSON using `mongoexport`,
-copy the old media files, and use the `import_mongo_export` management command.
-The importer reads exports without a MongoDB Python driver, preserves Django
-password hashes and Mongo listing IDs, and leaves the source database intact.
-Refer to README.md for the command example.
+Run `manage.py migrate` to create or update the collections and indexes.
+Existing SQLite data is not imported automatically, and existing MongoDB data
+must already match the application's document schema. Back up existing data
+before changing the configured database or applying migrations.
 
 ## How a request works
 
 ```text
 Browser -> rentals/urls.py -> rentals/views.py -> rentals/forms.py
-        -> rentals/repository.py -> Django ORM -> PostgreSQL -> templates/
+        -> rentals/repository.py -> Django ORM -> MongoDB -> templates/
 ```
 
 URLs route requests to views. Django middleware authenticates sessions; views
-check role and ownership; forms validate submitted data; ORM query helpers
-enforce domain rules and read/write relational records; templates render the
+check role and ownership; forms validate submitted data; repository helpers
+enforce domain rules and read/write MongoDB documents; templates render the
 response.
 
 ## Run and verify locally
@@ -144,7 +136,7 @@ From the project folder run:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m pip install -r requirements.txt
 npm install
 npm run css:build
@@ -152,9 +144,8 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-Before running migrations, update `POSTGRES_PASSWORD` in `.env` and create the
-configured database in PostgreSQL. See README.md for the database setup and
-the one-time SQLite data transfer steps.
+Before running migrations, configure `MONGODB_URI` and `MONGODB_NAME` in `.env`
+for a running MongoDB deployment. See README.md for setup details.
 
 Open `http://127.0.0.1:8000/` and create accounts through the site. Check the
 project with:

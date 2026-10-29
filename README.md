@@ -1,10 +1,10 @@
 # RentHouse
 
-RentHouse is a Django rental and property-management application. Rental data,
-accounts, and sessions use Django's ORM, PostgreSQL, and built-in authentication.
-MongoDB is not required to run the application. Django migrations manage the
-schema, and a one-time management command can import MongoDB Extended JSON
-exports without adding a MongoDB driver to the runtime dependencies.
+RentHouse is a Django rental and property-management application backed by
+MongoDB through MongoDB's official Django backend. Property gallery photos are
+embedded in their property documents; users, saved properties, visits, bookings,
+and sessions are stored as MongoDB documents and managed with Django's ORM and
+built-in authentication.
 
 RentHouse supports houses, apartments, paying-guest accommodation, hostels and
 rooms. It has two account roles: **Service provider** (lists rentals) and
@@ -29,13 +29,12 @@ NivaasMitra/
 │   ├── __init__.py
 │   ├── apps.py
 │   ├── forms.py                    # Form definitions and input validation
-│   ├── management/commands/        # One-time MongoDB export importer
-│   ├── migrations/                 # Django database migrations
 │   ├── models.py                   # Django ORM models and custom user
 │   ├── repository.py               # ORM queries and domain operations
 │   ├── tests.py                    # Application tests
 │   ├── urls.py                     # Rental app URL routes
 │   └── views.py                    # Request handlers
+├── mongo_migrations/               # MongoDB-compatible Django migrations
 ├── static/
 │   └── rentals/                    # Front-end assets
 │       ├── hero-bg.jpg
@@ -85,14 +84,13 @@ provider. While `DEBUG` is enabled, contact messages are printed by Django's
 console email backend.
 
 On Windows, use the project's virtual environment for every Python command.
-Install PostgreSQL and make sure its service is running. Create a database
-named `nivaasmitra` (or choose another name), copy `.env.example` to `.env`,
-and set `POSTGRES_PASSWORD` to the password for your PostgreSQL user. Django
-loads values from `.env`. Install dependencies and start the app from
-PowerShell:
+Start MongoDB locally or create a MongoDB Atlas deployment, copy
+`.env.example` to `.env`, and set `MONGODB_URI` and `MONGODB_NAME` for your
+deployment. Django loads values from `.env`. Install dependencies and start
+the app from PowerShell:
 
 ```powershell
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 npm install
 npm run css:build
@@ -100,71 +98,23 @@ npm run css:build
 .\venv\Scripts\python.exe manage.py runserver
 ```
 
-For a local PostgreSQL installation, create the database once in `psql` or
-pgAdmin:
-
-```sql
-CREATE DATABASE nivaasmitra;
-```
-
 Then visit `http://127.0.0.1:8000/`. Listings default to draft; select
 **Published** when adding or editing a landlord listing to make it searchable.
 Create user accounts through the signup page. Django's standard
-authentication/session system is enabled. PostgreSQL stores user, listing,
-booking, viewing-request, and session records. Uploaded image files are stored
-under Django's `MEDIA_ROOT`; PostgreSQL stores their paths.
+authentication/session system is enabled. MongoDB stores account, listing,
+booking, viewing-request, saved-property, and session documents. Gallery photo
+metadata is embedded in the parent listing document. Uploaded image files are
+stored under Django's `MEDIA_ROOT`; MongoDB stores their paths.
 
 Run checks and tests with `.\venv\Scripts\python.exe manage.py check` and
 `.\venv\Scripts\python.exe manage.py test`.
 Run `npm run css:watch` while developing styles. For deployment requirements
 and real-world limitations, read `WORKFLOW.md`.
 
-## Move existing SQLite data to PostgreSQL
+## Data and backups
 
-The existing `db.sqlite3` is not deleted or changed by switching the app's
-database setting. Once PostgreSQL is configured and the schema is migrated,
-copy its rental records into PostgreSQL with:
-
-```powershell
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
-.\venv\Scripts\python.exe manage.py migrate
-.\venv\Scripts\python.exe manage.py import_sqlite_data
-```
-
-The importer copies users, listings, gallery-image paths, saved listings,
-viewing requests, and bookings into an empty PostgreSQL app schema in one
-transaction. It does not modify `db.sqlite3`; keep that file as a backup until
-you confirm the imported records in pgAdmin. Uploaded image files remain in
-`media/`; PostgreSQL stores their relative paths.
-
-## Import existing MongoDB data (optional, one time)
-
-The application no longer connects to MongoDB. To retain existing data, create
-canonical Extended JSON exports for `users`, `properties`, `property_images`,
-`saved_properties`, `visit_requests`, and `reservations` using `mongoexport`.
-Keep the original MongoDB database unchanged as a backup. With MongoDB
-Database Tools installed, export every collection from PowerShell:
-
-```powershell
-$database = "renthouse"
-$collections = @("users", "properties", "property_images", "saved_properties", "visit_requests", "reservations")
-New-Item -ItemType Directory -Force .\mongo-export | Out-Null
-foreach ($collection in $collections) {
-  mongoexport --uri $env:MONGODB_URI --db $database --collection $collection --jsonFormat=canonical --out ".\mongo-export\$collection.json"
-  if ($LASTEXITCODE -ne 0) { throw "Export failed for $collection" }
-}
-```
-
-Copy the old media directory or provide it as `--media-source`, then run:
-
-```powershell
-.\venv\Scripts\python.exe manage.py migrate
-.\venv\Scripts\python.exe manage.py import_mongo_export `
-  --directory .\mongo-export `
-  --media-source .\old-media
-```
-
-The importer reads JSON export files only, preserves account password hashes,
-listing IDs, request history, and media paths, and wraps database changes in a
-transaction. It does not modify MongoDB. See `python manage.py
-import_mongo_export --help` for arguments.
+`manage.py migrate` creates or updates the collections and indexes used by
+this application. It does not import records from `db.sqlite3` or from a
+different MongoDB schema. Keep backups of any existing data before changing
+the configured database or applying schema changes. The SQLite file is left
+untouched.

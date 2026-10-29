@@ -63,7 +63,7 @@
                      src="{{ photo.image.url }}"
                      alt="Gallery photo for {{ property.title }}">
                 <form method="post"
-                      action="{% url 'property_image_delete' property.pk photo.pk %}"
+                      action="{% url 'property_image_delete' property.pk photo.image_id %}"
                       data-confirm="Remove this photo?" class="p-2">
                   {% csrf_token %}
                   <button class="text-xs font-semibold text-rose-700 hover:underline" type="submit">

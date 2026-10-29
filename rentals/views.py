@@ -226,17 +226,15 @@ def contact(request):
     )
 
 
-def _property_or_404(pk, *, owner_id=None, status=None, with_gallery=False):
-    property_listing = get_property(
-        pk, owner_id=owner_id, status=status, with_gallery=with_gallery
-    )
+def _property_or_404(pk, *, owner_id=None, status=None):
+    property_listing = get_property(pk, owner_id=owner_id, status=status)
     if property_listing is None:
         raise Http404
     return property_listing
 
 
 def property_detail(request, pk):
-    property_listing = get_property(pk, with_gallery=True)
+    property_listing = get_property(pk)
     if property_listing is None:
         raise Http404
     if (
@@ -334,7 +332,7 @@ def property_create(request):
 
 @require_login
 def property_edit(request, pk):
-    property_listing = _property_or_404(pk, owner_id=request.user.id, with_gallery=True)
+    property_listing = _property_or_404(pk, owner_id=request.user.id)
     form = PropertyForm(
         request.POST or None,
         request.FILES or None,
@@ -437,7 +435,7 @@ def _detail_error(request, property_listing, *, visit_form=None, reservation_for
 @require_login
 @require_POST
 def visit_request_create(request, pk):
-    property_listing = _property_or_404(pk, status=Property.Status.PUBLISHED, with_gallery=True)
+    property_listing = _property_or_404(pk, status=Property.Status.PUBLISHED)
     if request.user.role != User.Role.RENTER:
         messages.error(request, "Only home seeker accounts can request property viewings.")
         return redirect("property_detail", pk=pk)
@@ -493,7 +491,7 @@ def visit_request_cancel(request, pk):
 @require_login
 @require_POST
 def reservation_create(request, pk):
-    property_listing = _property_or_404(pk, status=Property.Status.PUBLISHED, with_gallery=True)
+    property_listing = _property_or_404(pk, status=Property.Status.PUBLISHED)
     if request.user.role != User.Role.RENTER:
         messages.error(request, "Only home seeker accounts can book a place.")
         return redirect("property_detail", pk=pk)

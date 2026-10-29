@@ -1,6 +1,6 @@
 from datetime import date
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.db.models import Q
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -15,11 +15,8 @@ from .models import (
 )
 
 
-def _property_queryset(*, with_gallery=False):
-    queryset = Property.objects.select_related("owner")
-    if with_gallery:
-        queryset = queryset.prefetch_related("gallery")
-    return queryset
+def _property_queryset():
+    return Property.objects.select_related("owner")
 
 
 def _valid_pk(model, value):
@@ -56,8 +53,7 @@ def create_user(*, username, email, first_name, last_name, role, password):
     )
     user.set_password(password)
     try:
-        with transaction.atomic():
-            user.save()
+        user.save()
     except IntegrityError as error:
         if find_user_by_email(email):
             raise ValueError("An account with this email already exists.") from error
@@ -67,10 +63,10 @@ def create_user(*, username, email, first_name, last_name, role, password):
     return user
 
 
-def get_property(property_id, *, owner_id=None, status=None, with_gallery=False):
+def get_property(property_id, *, owner_id=None, status=None):
     if not _valid_pk(Property, property_id):
         return None
-    queryset = _property_queryset(with_gallery=with_gallery).filter(pk=property_id)
+    queryset = _property_queryset().filter(pk=property_id)
     if owner_id is not None:
         queryset = queryset.filter(owner_id=owner_id)
     if status is not None:
@@ -139,22 +135,33 @@ def count_visits_for_property(property_id):
 
 
 def create_property_image(property_id, image_name):
-    return PropertyImage.objects.create(property_id=property_id, image=image_name)
+    listing = Property.objects.get(pk=property_id)
+    image = PropertyImage(image=image_name)
+    listing.gallery.append(image)
+    listing.save(update_fields=("gallery",))
+    return image
 
 
 def list_property_images(property_id):
-    return list(PropertyImage.objects.filter(property_id=property_id))
+    listing = Property.objects.get(pk=property_id)
+    return listing.gallery_images
 
 
 def delete_property_image(property_id, image_id):
-    image = PropertyImage.objects.filter(pk=image_id, property_id=property_id).first()
-    if image is not None:
-        image.delete()
+    listing = Property.objects.filter(pk=property_id).first()
+    if listing is None:
+        return None
+    image = next((photo for photo in listing.gallery if photo.image_id == image_id), None)
+    if image is None:
+        return None
+    listing.gallery.remove(image)
+    listing.save(update_fields=("gallery",))
     return image
 
 
 def get_image_count(property_id):
-    return PropertyImage.objects.filter(property_id=property_id).count()
+    listing = Property.objects.filter(pk=property_id).first()
+    return len(listing.gallery) if listing is not None else 0
 
 
 def saved_property_ids(renter_id):
@@ -203,13 +210,12 @@ def create_visit(property_id, renter_id, scheduled_for, message=""):
     if scheduled_for <= timezone.now():
         raise ValueError("Choose a visit time in the future.")
     try:
-        with transaction.atomic():
-            return VisitRequest.objects.create(
-                property=listing,
-                renter=renter,
-                scheduled_for=scheduled_for,
-                message=message,
-            )
+        return VisitRequest.objects.create(
+            property=listing,
+            renter=renter,
+            scheduled_for=scheduled_for,
+            message=message,
+        )
     except IntegrityError as error:
         raise ValueError(
             "You already have an open visit request for this property. Cancel or finish it before requesting another."
@@ -264,24 +270,23 @@ def create_reservation(
         raise ValueError("Check-in cannot be in the past.")
     if end_date <= start_date:
         raise ValueError("Check-out must be after check-in.")
-    with transaction.atomic():
-        overlapping = Reservation.objects.filter(
-            property=listing,
-            status__in=(Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED),
-            start_date__lt=end_date,
-            end_date__gt=start_date,
+    overlapping = Reservation.objects.filter(
+        property=listing,
+        status__in=(Reservation.Status.REQUESTED, Reservation.Status.CONFIRMED),
+        start_date__lt=end_date,
+        end_date__gt=start_date,
+    )
+    if overlapping.exists():
+        raise ValueError(
+            "These dates overlap another active booking request for this property."
         )
-        if overlapping.exists():
-            raise ValueError(
-                "These dates overlap another active booking request for this property."
-            )
-        return Reservation.objects.create(
-            property=listing,
-            renter=renter,
-            start_date=start_date,
-            end_date=end_date,
-            message=message,
-        )
+    return Reservation.objects.create(
+        property=listing,
+        renter=renter,
+        start_date=start_date,
+        end_date=end_date,
+        message=message,
+    )
 
 
 def list_reservations(*, renter_id=None, owner_id=None):
@@ -315,28 +320,23 @@ def get_reservation(reservation_id, *, renter_id=None, owner_id=None, status=Non
 
 
 def update_reservation_status(reservation_id, status):
-    with transaction.atomic():
-        reservation = (
-            Reservation.objects.select_for_update()
-            .filter(pk=reservation_id)
-            .first()
-        )
-        if reservation is None:
-            return False
-        if status == Reservation.Status.CONFIRMED:
-            overlapping = Reservation.objects.filter(
-                property=reservation.property,
-                status__in=(
-                    Reservation.Status.REQUESTED,
-                    Reservation.Status.CONFIRMED,
-                ),
-                start_date__lt=reservation.end_date,
-                end_date__gt=reservation.start_date,
-            ).exclude(pk=reservation.pk)
-            if overlapping.exists():
-                raise ValueError(
-                    "These dates overlap another active booking request for this property."
-                )
-        reservation.status = status
-        reservation.save(update_fields=("status", "updated_at"))
-        return True
+    reservation = Reservation.objects.filter(pk=reservation_id).first()
+    if reservation is None:
+        return False
+    if status == Reservation.Status.CONFIRMED:
+        overlapping = Reservation.objects.filter(
+            property=reservation.property,
+            status__in=(
+                Reservation.Status.REQUESTED,
+                Reservation.Status.CONFIRMED,
+            ),
+            start_date__lt=reservation.end_date,
+            end_date__gt=reservation.start_date,
+        ).exclude(pk=reservation.pk)
+        if overlapping.exists():
+            raise ValueError(
+                "These dates overlap another active booking request for this property."
+            )
+    reservation.status = status
+    reservation.save(update_fields=("status", "updated_at"))
+    return True
